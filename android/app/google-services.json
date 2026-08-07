@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "263484708645",
+    "project_id": "rescuepulse11",
+    "storage_bucket": "rescuepulse11.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:263484708645:android:0fdd89504702d588ab6ccc",
+        "android_client_info": {
+          "package_name": "com.mdrrmo.rescue_pulse"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYExMezpjHRsruxKXwULnJlrgLF5KMMN0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
