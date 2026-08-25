@@ -321,13 +321,16 @@ class ApiService {
   static Future<void> updateFcmToken(String fcmToken) async {
     try {
       final headers = await _authHeaders();
-      await http.post(
+      final response = await http.post(
         Uri.parse('$baseUrl/fcm-token'),
         headers: headers,
         body: jsonEncode({'fcm_token': fcmToken}),
       );
-    } catch (_) {
-      // Non-critical — fail silently
+      debugPrint(
+        'FCM token update -> status: ${response.statusCode}, body: ${response.body}',
+      );
+    } catch (e) {
+      debugPrint('FCM token update FAILED: $e');
     }
   }
 

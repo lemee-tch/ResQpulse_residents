@@ -5,7 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'api_service.dart';
 import 'login.dart';
 import 'push_notification.dart';
-import 'verify_email.dart';
+import 'home.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -24,6 +24,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _mobileController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _otpController = TextEditingController();
 
   // Municipality is now fixed to Rosales — no selection needed
   static const String _municipality = 'Rosales';
@@ -33,11 +34,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _selectedZone;
 
   bool _obscurePassword = true;
-  bool _isLoading = false;
+  bool _isSendingCode = false;
+  bool _isVerifying = false;
   File? _uploadedFile;
   String? _uploadedFileName;
   final ImagePicker _picker = ImagePicker();
   String? _errorMessage;
+
+  // Inline OTP state — replaces the old "navigate to a separate
+  // VerifyEmailScreen" flow. Once the code is sent, the whole form
+  // (except the OTP field + the email field's inline "Resend" action)
+  // locks so the account data being verified can't drift from what was
+  // actually submitted to the backend.
+  bool _otpSent = false;
 
   // ── Rosales-only data ─────────────────────────────────────────────
   static const List<String> _barangays = [
@@ -110,6 +119,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _mobileController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _otpController.dispose();
     super.dispose();
   }
 
@@ -298,47 +308,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  Future<bool> _showCreateAccountConfirmation() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Create Account?',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1A1A2E),
-          ),
-        ),
-        content: const Text(
-          'Please make sure your details and uploaded ID are correct. '
-          'You\'ll need to verify your email with a code before you can log in.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: TextStyle(color: Colors.grey[600])),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1A3A8F),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Create Account',
-              style: TextStyle(color: Colors.white),
-            ),
-          ),
-        ],
-      ),
-    );
-    return confirmed ?? false;
-  }
-
-  void _handleRegister() async {
+  /// Inline "Get Code" — validates the ENTIRE form (this endpoint creates
+  /// the account and sends the OTP in one call, same as before), then
+  /// stays on this page and reveals the verification-code field instead
+  /// of navigating to a separate screen. No confirmation dialog here —
+  /// that would interrupt the "just get me the code" action; the person
+  /// already reviews everything one more time at the final "VERIFY &
+  /// CONTINUE" step.
+  Future<void> _handleGetCode() async {
     if (!_formKey.currentState!.validate()) return;
 
     if (_uploadedFile == null) {
@@ -346,11 +323,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    final confirmed = await _showCreateAccountConfirmation();
-    if (!confirmed) return;
-
     setState(() {
-      _isLoading = true;
+      _isSendingCode = true;
       _errorMessage = null;
     });
 
@@ -370,23 +344,73 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
 
     if (!mounted) return;
-    setState(() => _isLoading = false);
+    setState(() => _isSendingCode = false);
 
     if (result.success) {
+      setState(() => _otpSent = true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Account created! Check your email for a verification code.',
+            'Account created! Enter the code sent to your email below.',
           ),
           backgroundColor: Color(0xFF1A3A8F),
         ),
       );
+    } else {
+      setState(() => _errorMessage = result.error);
+    }
+  }
+
+  /// Inline "Resend" — same email, just asks the backend for a fresh code.
+  Future<void> _handleResendCode() async {
+    setState(() => _isSendingCode = true);
+
+    final result = await ApiService.resendVerificationOtp(
+      email: _emailController.text.trim(),
+    );
+
+    if (!mounted) return;
+    setState(() => _isSendingCode = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.success
+              ? 'A new code was sent to ${_emailController.text.trim()}'
+              : (result.error ?? 'Could not resend code.'),
+        ),
+        backgroundColor: result.success ? const Color(0xFF1A3A8F) : Colors.red,
+      ),
+    );
+  }
+
+  /// Final step — verifies the OTP inline, then logs straight into Home
+  /// (no separate confirmation screen).
+  Future<void> _handleVerifyEmail() async {
+    if (_otpController.text.trim().length != 4) {
+      setState(() => _errorMessage = 'Please enter the 6-digit code.');
+      return;
+    }
+
+    setState(() {
+      _isVerifying = true;
+      _errorMessage = null;
+    });
+
+    final result = await ApiService.verifyEmail(
+      email: _emailController.text.trim(),
+      otp: _otpController.text.trim(),
+    );
+
+    if (!mounted) return;
+    setState(() => _isVerifying = false);
+
+    if (result.success) {
+      await registerFcmToken();
+      if (!mounted) return;
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(
-          builder: (_) =>
-              VerifyEmailScreen(email: _emailController.text.trim()),
-        ),
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
         (route) => false,
       );
     } else {
@@ -396,6 +420,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool fieldsEnabled = !_otpSent;
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -428,6 +454,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (_otpSent) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF2E7D32)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.mark_email_read_outlined,
+                          color: Color(0xFF2E7D32),
+                          size: 18,
+                        ),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Code sent! Enter it below, then tap "Verify & '
+                            'Continue" to finish.',
+                            style: TextStyle(
+                              color: Color(0xFF1B5E20),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
                 // Error message
                 if (_errorMessage != null) ...[
                   Container(
@@ -470,6 +530,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   hint: 'Enter your first name',
                   icon: Icons.person_outline,
                   keyboardType: TextInputType.name,
+                  enabled: fieldsEnabled,
                   validator: (v) => (v == null || v.isEmpty)
                       ? 'First name is required'
                       : null,
@@ -482,6 +543,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   hint: 'Enter your middle name',
                   icon: Icons.person_outline,
                   keyboardType: TextInputType.name,
+                  enabled: fieldsEnabled,
                   validator: (v) => null,
                 ),
                 const SizedBox(height: 14),
@@ -492,6 +554,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   hint: 'Enter your last name',
                   icon: Icons.person_outline,
                   keyboardType: TextInputType.name,
+                  enabled: fieldsEnabled,
                   validator: (v) =>
                       (v == null || v.isEmpty) ? 'Last name is required' : null,
                 ),
@@ -503,6 +566,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   hint: 'e.g. Jr., Sr., III',
                   icon: Icons.badge_outlined,
                   keyboardType: TextInputType.text,
+                  enabled: fieldsEnabled,
                   validator: (v) => null,
                 ),
                 const SizedBox(height: 14),
@@ -513,13 +577,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   hint: 'e.g. 09XXXXXXXXX',
                   icon: Icons.phone_outlined,
                   keyboardType: TextInputType.phone,
+                  enabled: fieldsEnabled,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(11),
                   ],
                   validator: (v) {
-                    if (v == null || v.isEmpty)
+                    if (v == null || v.isEmpty) {
                       return 'Mobile number is required';
+                    }
                     if (v.length < 10) return 'Enter a valid mobile number';
                     return null;
                   },
@@ -589,6 +655,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   icon: Icons.home_work_outlined,
                   value: _selectedBarangay,
                   items: _barangays,
+                  enabled: fieldsEnabled,
                   onChanged: (v) => setState(() => _selectedBarangay = v),
                   validator: (v) =>
                       v == null ? 'Please select a barangay' : null,
@@ -602,6 +669,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   icon: Icons.location_on_outlined,
                   value: _selectedStreet,
                   items: _streets,
+                  enabled: fieldsEnabled,
                   onChanged: (v) => setState(() => _selectedStreet = v),
                   validator: (v) => v == null ? 'Please select a street' : null,
                 ),
@@ -614,6 +682,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   icon: Icons.map_outlined,
                   value: _selectedZone,
                   items: _zones,
+                  enabled: fieldsEnabled,
                   onChanged: (v) => setState(() => _selectedZone = v),
                   validator: (v) => v == null ? 'Please select a zone' : null,
                 ),
@@ -628,27 +697,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 6),
-                _buildUploadIDCard(),
+                _buildUploadIDCard(enabled: fieldsEnabled),
 
                 const SizedBox(height: 28),
                 _sectionHeader('Create Account'),
                 const SizedBox(height: 16),
 
-                _buildTextField(
-                  controller: _emailController,
-                  label: 'Email',
-                  hint: 'Enter your email',
-                  icon: Icons.email_outlined,
-                  keyboardType: TextInputType.emailAddress,
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'Email is required';
-                    if (!RegExp(
-                      r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
-                    ).hasMatch(v))
-                      return 'Enter a valid email address';
-                    return null;
-                  },
-                ),
+                // ── Email + inline "Get Code" / "Resend" ────────────
+                _buildEmailWithOtp(),
+
                 const SizedBox(height: 14),
 
                 _buildTextField(
@@ -657,6 +714,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   hint: 'Create a password',
                   icon: Icons.lock_outline,
                   obscureText: _obscurePassword,
+                  enabled: fieldsEnabled,
                   suffixIcon: IconButton(
                     icon: Icon(
                       _obscurePassword
@@ -670,20 +728,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   validator: (v) {
                     if (v == null || v.isEmpty) return 'Password is required';
-                    if (v.length < 6)
+                    if (v.length < 6) {
                       return 'Password must be at least 6 characters';
+                    }
                     return null;
                   },
                 ),
-                const SizedBox(height: 32),
 
+                const SizedBox(height: 28),
+
+                if (!_otpSent)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      'Fill in your details above, then tap "Get Code" next '
+                      'to your email to receive a verification code and '
+                      'create your account.',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: Colors.grey[500],
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
                 SizedBox(
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _handleRegister,
+                    onPressed: (!_otpSent || _isVerifying)
+                        ? null
+                        : _handleVerifyEmail,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1A3A8F),
+                      disabledBackgroundColor: Colors.grey[300],
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -691,7 +768,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       elevation: 3,
                       shadowColor: const Color(0xFF1A3A8F).withOpacity(0.4),
                     ),
-                    child: _isLoading
+                    child: _isVerifying
                         ? const SizedBox(
                             width: 22,
                             height: 22,
@@ -701,7 +778,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                           )
                         : const Text(
-                            'CREATE ACCOUNT',
+                            'VERIFY & CONTINUE',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -719,10 +796,122 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  Widget _buildUploadIDCard() {
+  /// Email field with a "Get Code" / "Resend" button positioned beside
+  /// it (a real widget in a Row, not squeezed into suffixIcon — that
+  /// approach clipped/hid the button), plus an ALWAYS-visible 6-digit
+  /// verification code field directly underneath, exactly matching the
+  /// reference layout: both fields on screen together, no separate
+  /// "verify" screen to navigate to.
+  Widget _buildEmailWithOtp() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Email',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF444466),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                readOnly: _otpSent,
+                style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A2E)),
+                decoration: _inputDecoration(
+                  'Enter your email',
+                  Icons.email_outlined,
+                ),
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'Email is required';
+                  if (!RegExp(
+                    r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
+                  ).hasMatch(v)) {
+                    return 'Enter a valid email address';
+                  }
+                  return null;
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: TextButton(
+                onPressed: _isSendingCode
+                    ? null
+                    : (_otpSent ? _handleResendCode : _handleGetCode),
+                style: TextButton.styleFrom(
+                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 14,
+                  ),
+                ),
+                child: _isSendingCode
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(
+                        _otpSent ? 'Resend' : 'Get Code',
+                        style: const TextStyle(
+                          color: Color(0xFFD32F2F),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13.5,
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        const Text(
+          'Verification Code',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF444466),
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: _otpController,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 6,
+            color: Color(0xFF1A1A2E),
+          ),
+          decoration: _inputDecoration(
+            'Enter the 6-digit code',
+            Icons.mail_outline,
+          ).copyWith(counterText: ''),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _otpSent
+              ? 'Code sent to ${_emailController.text.trim()}.'
+              : 'Tap "Get Code" above to receive your verification code.',
+          style: TextStyle(fontSize: 11.5, color: Colors.grey[500]),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUploadIDCard({required bool enabled}) {
     final bool uploaded = _uploadedFileName != null;
     return GestureDetector(
-      onTap: _handleUploadID,
+      onTap: enabled ? _handleUploadID : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         width: double.infinity,
@@ -784,24 +973,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ],
                     ),
                   ),
-                  GestureDetector(
-                    onTap: () => setState(() {
-                      _uploadedFileName = null;
-                      _uploadedFile = null;
-                    }),
-                    child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: Colors.red[50],
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.close,
-                        color: Colors.red,
-                        size: 16,
+                  if (enabled)
+                    GestureDetector(
+                      onTap: () => setState(() {
+                        _uploadedFileName = null;
+                        _uploadedFile = null;
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.red[50],
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close,
+                          color: Colors.red,
+                          size: 16,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               )
             : Column(
@@ -906,6 +1096,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     required IconData icon,
     TextInputType keyboardType = TextInputType.text,
     bool obscureText = false,
+    bool enabled = true,
     Widget? suffixIcon,
     List<TextInputFormatter>? inputFormatters,
     String? Function(String?)? validator,
@@ -926,6 +1117,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           controller: controller,
           keyboardType: keyboardType,
           obscureText: obscureText,
+          enabled: enabled,
           inputFormatters: inputFormatters,
           validator: validator,
           style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A2E)),
@@ -943,6 +1135,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     required List<String> items,
     required void Function(String?) onChanged,
     required String? Function(String?)? validator,
+    bool enabled = true,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -958,7 +1151,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
           value: value,
-          onChanged: onChanged,
+          onChanged: enabled ? onChanged : null,
           validator: validator,
           isExpanded: true,
           icon: const Icon(

@@ -724,9 +724,16 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
     setState(() {
       _isLoading = false;
       if (result.success && result.data is List) {
+        final cutoff = DateTime.now().subtract(const Duration(days: 3));
         _alerts = (result.data as List)
-            .take(3)
             .map((e) => e as Map<String, dynamic>)
+            .where((alert) {
+              final created = DateTime.tryParse(
+                alert['created_at']?.toString() ?? '',
+              );
+              return created != null && created.isAfter(cutoff);
+            })
+            .take(3)
             .toList();
       }
     });

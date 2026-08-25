@@ -31,6 +31,17 @@ flutter:
   assets:
     - assets/logo.png
     - assets/Splash.png
-    - assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp
     - assets/gifs/cut2.gif
+    - assets/burn1.png
+    - assets/burn2.png
+    - assets/burn3.png
+    - assets/burn4.png
+    - assets/burn5.png
+    - assets/cut1.png
+    - assets/cut2.png
+    - assets/cut3.png
+    - assets/cut4.png
+    - assets/cut5.png
+    - assets/cut6.png
+    - assets/cut7.png
 

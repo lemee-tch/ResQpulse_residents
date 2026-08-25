@@ -14,7 +14,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
   bool _isLoading = true;
   String? _errorMessage;
 
-  final List<String> _tabs = ['All', 'Alerts', 'Updates'];
+  final List<String> _tabs = ['Recent alerts', 'Alert History'];
 
   List<_AlertData> _allAlerts = [];
 
@@ -50,8 +50,8 @@ class _AlertsScreenState extends State<AlertsScreen> {
   }
 
   List<_AlertData> get _filtered {
-    if (_selectedTab == 'All') return _allAlerts;
-    return _allAlerts.where((a) => a.type == _selectedTab).toList();
+    if (_selectedTab == 'Recent') return _allAlerts.take(5).toList();
+    return _allAlerts;
   }
 
   @override

@@ -96,9 +96,13 @@ Future<void> initializeFirebaseMessaging() async {
 /// This is what actually attaches a device token to the now-authenticated
 /// citizen — calling it before login has no one to attach the token to.
 Future<void> registerFcmToken() async {
+  debugPrint('registerFcmToken() called');
   final messaging = FirebaseMessaging.instance;
   await messaging.requestPermission();
 
   final token = await messaging.getToken();
-  print('FCM TOKEN: $token');
+  debugPrint('FCM getToken() returned: $token');
+  if (token != null) {
+    await ApiService.updateFcmToken(token);
+  }
 }

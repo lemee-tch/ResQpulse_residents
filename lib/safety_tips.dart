@@ -11,13 +11,13 @@ class SafetyTipsScreen extends StatefulWidget {
 class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
   String _query = '';
 
-  // NOTE ON GIFS:
-  // Every step below already has a `gif` wired in so the screen is fully
-  // testable today. They're PLACEHOLDERS (a placeholder image generator)
-  // since real GIFs aren't ready yet. To swap in real ones:
-  //   - Network: gif: 'https://yourcdn.com/gifs/cpr_step1.gif'
-  //   - Local:   gif: 'assets/gifs/cpr_step1.gif'
-  // The _GifImage widget auto-detects which type it is.
+  // NOTE ON IMAGES:
+  // Every step below already has an `image` wired in so the screen is
+  // fully testable today. They're PLACEHOLDERS since real images aren't
+  // ready yet. To swap in real ones:
+  //   - Network: image: 'https://yourcdn.com/images/cpr_step1.png'
+  //   - Local:   image: 'assets/images/cpr_step1.png'
+  // The _StepImage widget auto-detects which type it is.
 
   final List<_TipItem> _tips = const [
     // ── Fully detailed showcase topic (matches reference design) ──────────
@@ -39,7 +39,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Do not use ice or very cold water.',
           ],
           timeBadge: '10-20 minutes',
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/burn1.png',
         ),
         _StepItem(
           title: 'Remove anything tight',
@@ -47,7 +47,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Gently remove rings, watches, bracelets, or tight clothing near the burn.',
             'Do this while the skin is still cool to prevent swelling.',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/burn2.png',
         ),
         _StepItem(
           title: 'Cover the burn',
@@ -55,7 +55,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Cover the burn with a clean, dry cloth or sterile non-stick dressing.',
             'Do not use cotton or fluffy materials.',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/burn3.png',
         ),
         _StepItem(
           title: 'Do NOT apply',
@@ -64,7 +64,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'These can make the burn worse or cause infection.',
           ],
           dontApplyItems: ['🧈', '🛢️', '🦷', '🍶'],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/burn4.png',
         ),
         _StepItem(
           title: 'Check the burn',
@@ -80,7 +80,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Deep / Blistered',
             'Chemical / Electrical',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/burn5.png',
         ),
         _StepItem(
           title: 'Get medical help',
@@ -108,7 +108,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Make sure the area is safe.',
             'Put on gloves if available.',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/cut1.png',
         ),
         _StepItem(
           title: 'Stop the bleeding',
@@ -116,7 +116,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Apply gentle pressure with a clean cloth or gauze to stop bleeding.',
             'Elevate the injured area above heart level if possible.',
           ],
-          gif: 'assets/gifs/cut2.gif',
+          image: 'assets/cut2.png',
         ),
         _StepItem(
           title: 'Clean the cut',
@@ -124,7 +124,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Rinse the cut gently with clean water and mild soap.',
             'Remove any dirt or debris around the wound.',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/cut3.png',
         ),
         _StepItem(
           title: 'Apply an antiseptic',
@@ -132,7 +132,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Clean around the cut with an antiseptic solution,',
             'Do not put antiseptic directly inside the wound.',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/cut4.png',
         ),
         _StepItem(
           title: 'Cover the cut',
@@ -140,7 +140,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Cover with the sterile bandage or adhesive bandage.',
             'Change the bandage if it gets wet or dirty.',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/cut5.png',
         ),
         _StepItem(
           title: 'Watch for infection (seek medical help if you notice:)',
@@ -150,14 +150,14 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'increasing pain or tenderness',
             'fever or chills',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/cut6.png',
         ),
         _StepItem(
           title: 'Get medical help',
           bullets: [
             'Get medical attention for deep cuts, heavy bleeding, or if the cut needs stitches.',
           ],
-          gif: 'assets/gifs/coming-soon-sticker-0map1gd71dtb6y8b.webp',
+          image: 'assets/cut7.png',
         ),
       ],
     ),
@@ -174,17 +174,17 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
           bullets: [
             'Keep the injured area still — do not try to straighten it.',
           ],
-          gif: 'Fracture+1',
+          image: 'Fracture+1',
         ),
         _StepItem(
           title: 'Splint it',
           bullets: ['Apply a splint if available to immobilize the limb.'],
-          gif: 'Fracture+2',
+          image: 'Fracture+2',
         ),
         _StepItem(
           title: 'Apply ice',
           bullets: ['Apply ice wrapped in cloth to reduce swelling.'],
-          gif: 'Fracture+3',
+          image: 'Fracture+3',
         ),
         _StepItem(
           title: 'Get help',
@@ -204,24 +204,24 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Check & call',
           bullets: ['Check for responsiveness and call emergency services.'],
-          gif: 'CPR+1',
+          image: 'CPR+1',
         ),
         _StepItem(
           title: 'Open the airway',
           bullets: ['Tilt the head back and lift the chin to open the airway.'],
-          gif: 'CPR+2',
+          image: 'CPR+2',
         ),
         _StepItem(
           title: 'Compress',
           bullets: [
             'Give 30 chest compressions hard and fast (2 inches deep).',
           ],
-          gif: 'CPR+3',
+          image: 'CPR+3',
         ),
         _StepItem(
           title: 'Breathe',
           bullets: ['Give 2 rescue breaths, then repeat the cycle.'],
-          gif: 'CPR+4',
+          image: 'CPR+4',
         ),
       ],
     ),
@@ -238,26 +238,26 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
           bullets: [
             'Ask the person if they are choking. If they can\'t speak, act fast.',
           ],
-          gif: 'Choking+1',
+          image: 'Choking+1',
         ),
         _StepItem(
           title: 'Back blows',
           bullets: [
             'Give up to 5 firm back blows between the shoulder blades.',
           ],
-          gif: 'Choking+2',
+          image: 'Choking+2',
         ),
         _StepItem(
           title: 'Abdominal thrusts',
           bullets: ['Give up to 5 abdominal thrusts (Heimlich maneuver).'],
-          gif: 'Heimlich',
+          image: 'Heimlich',
         ),
         _StepItem(
           title: 'Repeat',
           bullets: [
             'Alternate back blows and abdominal thrusts until the object is cleared.',
           ],
-          gif: 'Choking+4',
+          image: 'Choking+4',
         ),
       ],
     ),
@@ -275,19 +275,19 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
           bullets: [
             'Keep the person calm and still — movement spreads venom faster.',
           ],
-          gif: 'Snake+1',
+          image: 'Snake+1',
         ),
         _StepItem(
           title: 'Remove tight items',
           bullets: [
             'Remove rings or tight clothing near the bite before swelling starts.',
           ],
-          gif: 'Snake+2',
+          image: 'Snake+2',
         ),
         _StepItem(
           title: 'Immobilize',
           bullets: ['Loosely immobilize the limb below heart level.'],
-          gif: 'Snake+3',
+          image: 'Snake+3',
         ),
         _StepItem(
           title: 'Get to a hospital',
@@ -307,19 +307,19 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Move to shade',
           bullets: ['Move the person to a cool, shaded area immediately.'],
-          gif: 'HeatStroke+1',
+          image: 'HeatStroke+1',
         ),
         _StepItem(
           title: 'Cool the body',
           bullets: [
             'Remove excess clothing and apply cool, wet cloths to skin.',
           ],
-          gif: 'HeatStroke+2',
+          image: 'HeatStroke+2',
         ),
         _StepItem(
           title: 'Hydrate',
           bullets: ['Offer small sips of cool water if the person is alert.'],
-          gif: 'HeatStroke+3',
+          image: 'HeatStroke+3',
         ),
         _StepItem(
           title: 'Monitor',
@@ -341,7 +341,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Sit forward',
           bullets: ['Sit up and lean slightly forward.'],
-          gif: 'Nosebleed+1',
+          image: 'Nosebleed+1',
         ),
         _StepItem(
           title: 'Pinch the nose',
@@ -349,17 +349,17 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Pinch the soft part of the nose firmly for 10-15 minutes.',
           ],
           timeBadge: '10-15 minutes',
-          gif: 'Nosebleed+2',
+          image: 'Nosebleed+2',
         ),
         _StepItem(
           title: 'Apply cold compress',
           bullets: ['Apply a cold compress to the bridge of the nose.'],
-          gif: 'Nosebleed+3',
+          image: 'Nosebleed+3',
         ),
         _StepItem(
           title: 'Avoid blowing',
           bullets: ['Avoid blowing the nose for several hours after.'],
-          gif: 'Nosebleed+4',
+          image: 'Nosebleed+4',
         ),
       ],
     ),
@@ -374,21 +374,21 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Remove the allergen',
           bullets: ['Remove the person from the allergen source if possible.'],
-          gif: 'Allergy+1',
+          image: 'Allergy+1',
         ),
         _StepItem(
           title: 'Use an EpiPen',
           bullets: [
             'Use an epinephrine auto-injector on the outer thigh if available.',
           ],
-          gif: 'Allergy+2',
+          image: 'Allergy+2',
         ),
         _StepItem(
           title: 'Position them',
           bullets: [
             'Lay them flat and elevate legs, unless breathing is difficult.',
           ],
-          gif: 'Allergy+3',
+          image: 'Allergy+3',
         ),
         _StepItem(
           title: 'Monitor',
@@ -408,26 +408,26 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Drop',
           bullets: ['DROP to hands and knees immediately.'],
-          gif: 'Quake+1',
+          image: 'Quake+1',
         ),
         _StepItem(
           title: 'Cover',
           bullets: [
             'Take COVER under a sturdy table or against an interior wall.',
           ],
-          gif: 'Quake+2',
+          image: 'Quake+2',
         ),
         _StepItem(
           title: 'Hold on',
           bullets: ['HOLD ON until the shaking stops.'],
-          gif: 'Quake+3',
+          image: 'Quake+3',
         ),
         _StepItem(
           title: 'Evacuate carefully',
           bullets: [
             'After shaking stops, evacuate carefully and avoid damaged structures.',
           ],
-          gif: 'Quake+4',
+          image: 'Quake+4',
         ),
       ],
     ),
@@ -442,24 +442,24 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Move to higher ground',
           bullets: ['Move to higher ground immediately.'],
-          gif: 'Flood+1',
+          image: 'Flood+1',
         ),
         _StepItem(
           title: 'Avoid floodwater',
           bullets: ['Do not walk or drive through floodwater.'],
-          gif: 'Flood+2',
+          image: 'Flood+2',
         ),
         _StepItem(
           title: 'Turn off utilities',
           bullets: ['Turn off utilities at the main switch if safe to do so.'],
-          gif: 'Flood+3',
+          image: 'Flood+3',
         ),
         _StepItem(
           title: 'Follow alerts',
           bullets: [
             'Listen to emergency broadcasts and follow evacuation orders.',
           ],
-          gif: 'Flood+4',
+          image: 'Flood+4',
         ),
       ],
     ),
@@ -793,7 +793,7 @@ class _TipDetailScreen extends StatelessWidget {
 
 // ── Step Card ──────────────────────────────────────────────────────────────────
 // Layout order kept as: number+title -> bullets -> optional extras (icon grid /
-// body-check grid / emergency card) -> GIF full-width BELOW everything else.
+// body-check grid / emergency card) -> IMAGE full-width BELOW everything else.
 
 class _StepCard extends StatelessWidget {
   final _StepItem step;
@@ -952,10 +952,10 @@ class _StepCard extends StatelessWidget {
             ),
           ],
 
-          // Full-width GIF — stays BELOW description/extras, per the existing layout
+          // Full-width image — stays BELOW description/extras, per the existing layout
           if (!step.isEmergencyStep) ...[
             const SizedBox(height: 12),
-            _GifImage(gifSource: step.gif),
+            _StepImage(imageSource: step.image),
           ],
         ],
       ),
@@ -1024,47 +1024,47 @@ class _CheckGridTile extends StatelessWidget {
 
 // ── Emergency Call Card ────────────────────────────────────────────────────────
 
-// ── GIF Widget ────────────────────────────────────────────────────────────────
+// ── Image Widget ──────────────────────────────────────────────────────────────
+// Renders a static image (asset or network). Works for any image format
+// (.png, .jpg, .webp, etc.) — nothing here is GIF-specific.
 
-class _GifImage extends StatelessWidget {
-  final String? gifSource;
+class _StepImage extends StatelessWidget {
+  final String? imageSource;
   final double height;
 
-  const _GifImage({required this.gifSource, this.height = 180});
+  const _StepImage({required this.imageSource, this.height = 180});
 
   @override
   Widget build(BuildContext context) {
-    if (gifSource == null || gifSource!.isEmpty) {
-      return _placeholder(icon: Icons.image_outlined, label: 'No GIF yet');
+    if (imageSource == null || imageSource!.isEmpty) {
+      return _placeholder(icon: Icons.image_outlined, label: 'No image yet');
     }
 
-    final bool isNetwork = gifSource!.startsWith('http');
+    final bool isNetwork = imageSource!.startsWith('http');
 
     final Widget image = isNetwork
         ? Image.network(
-            gifSource!,
+            imageSource!,
             height: height,
             width: double.infinity,
             fit: BoxFit.cover,
-            gaplessPlayback: true,
             loadingBuilder: (context, child, progress) {
               if (progress == null) return child;
               return _placeholder(icon: null, label: 'Loading...');
             },
             errorBuilder: (context, error, stack) => _placeholder(
               icon: Icons.broken_image_outlined,
-              label: 'GIF unavailable',
+              label: 'Image unavailable',
             ),
           )
         : Image.asset(
-            gifSource!,
+            imageSource!,
             height: height,
             width: double.infinity,
             fit: BoxFit.cover,
-            gaplessPlayback: true,
             errorBuilder: (context, error, stack) => _placeholder(
               icon: Icons.broken_image_outlined,
-              label: 'GIF unavailable',
+              label: 'Image unavailable',
             ),
           );
 
@@ -1107,16 +1107,16 @@ class _GifImage extends StatelessWidget {
 class _StepItem {
   final String title;
   final List<String> bullets;
-  final String? gif;
+  final String? image;
   final String? timeBadge;
   final List<String>? dontApplyItems; // emoji list, rendered with red X overlay
   final List<String>? checkGrid; // labels for body-check style tiles
-  final bool isEmergencyStep; // renders call card instead of GIF
+  final bool isEmergencyStep; // renders call card instead of image
 
   const _StepItem({
     required this.title,
     this.bullets = const [],
-    this.gif,
+    this.image,
     this.timeBadge,
     this.dontApplyItems,
     this.checkGrid,
