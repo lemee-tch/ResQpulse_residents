@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -40,6 +41,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _uploadedFileName;
   final ImagePicker _picker = ImagePicker();
   String? _errorMessage;
+
+  // Resend cooldown — after a code is sent, "Get Code" turns into a
+  // disabled countdown ("Resend in 60s") so the person can't hammer the
+  // endpoint if the email is just running late, and re-enables as
+  // "Resend" once it hits zero.
+  Timer? _resendTimer;
+  int _resendCooldown = 0;
+  static const int _resendCooldownSeconds = 60;
+
+  void _startResendCooldown() {
+    _resendTimer?.cancel();
+    setState(() => _resendCooldown = _resendCooldownSeconds);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_resendCooldown <= 1) {
+        timer.cancel();
+        setState(() => _resendCooldown = 0);
+      } else {
+        setState(() => _resendCooldown -= 1);
+      }
+    });
+  }
 
   // Inline OTP state — replaces the old "navigate to a separate
   // VerifyEmailScreen" flow. Once the code is sent, the whole form
@@ -120,6 +146,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _otpController.dispose();
+    _resendTimer?.cancel();
     super.dispose();
   }
 
@@ -348,10 +375,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (result.success) {
       setState(() => _otpSent = true);
+      _startResendCooldown();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Account created! Enter the code sent to your email below.',
+            'We\'ve sent you a verification code — check your email.',
           ),
           backgroundColor: Color(0xFF1A3A8F),
         ),
@@ -361,8 +389,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// Inline "Resend" — same email, just asks the backend for a fresh code.
+  /// Inline "Resend" — same email, just asks the backend for a fresh
+  /// code. Guarded by the cooldown (the button itself is disabled while
+  /// counting down), but double-checked here too in case this ever gets
+  /// wired to something else that could call it early.
   Future<void> _handleResendCode() async {
+    if (_resendCooldown > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'We already sent you a code. You can resend in ${_resendCooldown}s '
+            'if you didn\'t receive it.',
+          ),
+          backgroundColor: Colors.grey[700],
+        ),
+      );
+      return;
+    }
+
     setState(() => _isSendingCode = true);
 
     final result = await ApiService.resendVerificationOtp(
@@ -371,6 +415,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (!mounted) return;
     setState(() => _isSendingCode = false);
+
+    if (result.success) _startResendCooldown();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -386,9 +432,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// Final step — verifies the OTP inline, then logs straight into Home
   /// (no separate confirmation screen).
+  ///
+  /// Sanitizes the OTP field before checking its length rather than just
+  /// `.trim()`-ing it — some keyboards/autofill suggestions (SMS code
+  /// autofill, one-tap suggestion bars) can insert non-digit characters
+  /// like spaces or dashes that `trim()` doesn't remove, which made the
+  /// "enter the 6-digit code" check fail even when 6 digits were visibly
+  /// typed.
   Future<void> _handleVerifyEmail() async {
-    if (_otpController.text.trim().length != 4) {
-      setState(() => _errorMessage = 'Please enter the 6-digit code.');
+    final code = _otpController.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (code.length != 6) {
+      setState(
+        () => _errorMessage =
+            'Please enter the 6-digit code (currently ${code.length} digit${code.length == 1 ? '' : 's'}).',
+      );
       return;
     }
 
@@ -399,7 +456,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     final result = await ApiService.verifyEmail(
       email: _emailController.text.trim(),
-      otp: _otpController.text.trim(),
+      otp: code,
     );
 
     if (!mounted) return;
@@ -843,7 +900,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: TextButton(
-                onPressed: _isSendingCode
+                onPressed: (_isSendingCode || _resendCooldown > 0)
                     ? null
                     : (_otpSent ? _handleResendCode : _handleGetCode),
                 style: TextButton.styleFrom(
@@ -860,9 +917,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Text(
-                        _otpSent ? 'Resend' : 'Get Code',
-                        style: const TextStyle(
-                          color: Color(0xFFD32F2F),
+                        _resendCooldown > 0
+                            ? 'Resend in ${_resendCooldown}s'
+                            : (_otpSent ? 'Resend' : 'Get Code'),
+                        style: TextStyle(
+                          color: _resendCooldown > 0
+                              ? Colors.grey[500]
+                              : const Color(0xFFD32F2F),
                           fontWeight: FontWeight.bold,
                           fontSize: 13.5,
                         ),
@@ -900,7 +961,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         const SizedBox(height: 4),
         Text(
           _otpSent
-              ? 'Code sent to ${_emailController.text.trim()}.'
+              ? (_resendCooldown > 0
+                    ? 'Code sent to ${_emailController.text.trim()}. '
+                          'Didn\'t get it? You can resend in ${_resendCooldown}s.'
+                    : 'Code sent to ${_emailController.text.trim()}. '
+                          'Still nothing? Tap Resend above.')
               : 'Tap "Get Code" above to receive your verification code.',
           style: TextStyle(fontSize: 11.5, color: Colors.grey[500]),
         ),
