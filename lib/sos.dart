@@ -8,7 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api_service.dart';
 
 class SOSScreen extends StatefulWidget {
-  const SOSScreen({super.key});
+  final bool isGuest;
+  const SOSScreen({super.key, this.isGuest = false});
 
   @override
   State<SOSScreen> createState() => _SOSScreenState();
@@ -208,6 +209,9 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
       final position = await _getCurrentLocation();
       if (!mounted) return;
 
+      // ApiService.sendSOS() only attaches an Authorization header when a
+      // token exists, so this call works identically for guests and
+      // logged-in citizens — the backend decides needs_review from that.
       final result = await ApiService.sendSOS(
         latitude: position.latitude,
         longitude: position.longitude,
@@ -220,13 +224,19 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
         setState(() {
           _sosSent = true;
           _isSending = false;
-          _locationStatus = 'Location sent to MDRRMO';
+          _locationStatus = widget.isGuest
+              ? 'Location sent — awaiting MDRRMO review'
+              : 'Location sent to MDRRMO';
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🚨 SOS Alert sent — help is on the way.'),
-            backgroundColor: Color(0xFF2E7D32),
-            duration: Duration(seconds: 4),
+          SnackBar(
+            content: Text(
+              widget.isGuest
+                  ? '🆘 SOS sent — MDRRMO will review it shortly.'
+                  : '🚨 SOS Alert sent — help is on the way.',
+            ),
+            backgroundColor: const Color(0xFF2E7D32),
+            duration: const Duration(seconds: 4),
           ),
         );
       } else {
@@ -324,6 +334,40 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
           child: Column(
             children: [
+              if (widget.isGuest && !_sosSent && !_isSending)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3E0),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        color: Color(0xFFE65100),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Guest mode: your location (and photo, if captured) is sent. MDRRMO reviews guest SOS alerts before dispatching responders.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[700],
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               // ── Headline + subtitle ──────────────────────────────
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
@@ -343,7 +387,9 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
               const SizedBox(height: 6),
               Text(
                 _sosSent
-                    ? 'MDRRMO has received your live location and photo.'
+                    ? (widget.isGuest
+                          ? 'MDRRMO has received your location and will review it shortly.'
+                          : 'MDRRMO has received your live location and photo.')
                     : (_isSending
                           ? 'Capturing photo and sharing your GPS location.'
                           : 'Press and hold the button below for 3 seconds.'),
@@ -695,12 +741,13 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
             subtitle: 'Gives responders visual context on arrival.',
           ),
           const SizedBox(height: 12),
-          const _InfoStep(
+          _InfoStep(
             icon: Icons.shield_outlined,
-            color: Color(0xFF2E7D32),
-            title: 'MDRRMO is alerted instantly',
-            subtitle:
-                'Logged as a critical-priority incident for immediate dispatch.',
+            color: const Color(0xFF2E7D32),
+            title: 'MDRRMO is alerted',
+            subtitle: widget.isGuest
+                ? 'As a guest, MDRRMO reviews your alert before it\'s dispatched to responders.'
+                : 'Logged as a critical-priority incident for immediate dispatch.',
           ),
         ],
       ),
@@ -749,9 +796,12 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 8),
           Text(
-            'Responders have your location and photo, and are being dispatched now. '
-            'If your situation changes or you need to move, keep the app open so we '
-            'can track updates.',
+            widget.isGuest
+                ? 'MDRRMO will review your alert shortly before dispatching responders. '
+                      'If your situation changes, you can call the hotline directly below.'
+                : 'Responders have your location and photo, and are being dispatched now. '
+                      'If your situation changes or you need to move, keep the app open so we '
+                      'can track updates.',
             style: TextStyle(
               fontSize: 12.5,
               color: Colors.grey[700],

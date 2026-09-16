@@ -8,7 +8,8 @@ import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
 
 class ReportIncidentScreen extends StatefulWidget {
-  const ReportIncidentScreen({super.key});
+  final bool isGuest;
+  const ReportIncidentScreen({super.key, this.isGuest = false});
 
   @override
   State<ReportIncidentScreen> createState() => _ReportIncidentScreenState();
@@ -17,8 +18,13 @@ class ReportIncidentScreen extends StatefulWidget {
 enum _LocationSource { none, gps, barangayLookup, error }
 
 class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
-  static const int _minPhotos = 3;
+  // Guests only need to send a location pin — photos and a written
+  // description are optional for them (they can still add photos if they
+  // want to, up to the same max). Logged-in citizens keep the original
+  // 3-5 required photos.
+  static const int _minPhotosLoggedIn = 3;
   static const int _maxPhotos = 5;
+  int get _minPhotos => widget.isGuest ? 0 : _minPhotosLoggedIn;
 
   final _formKey = GlobalKey<FormState>();
   final _descriptionController = TextEditingController();
@@ -141,10 +147,8 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
     'Flood',
     'Earthquake',
     'Accident',
-    'Vehicular Accident',
     'Medical Emergency',
     'Landslide',
-
     'Other',
   ];
 
@@ -472,6 +476,18 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
       await _resolveCoordinatesForSelection(locationText);
     }
 
+    // Guests are only required to have a location pin (from GPS or a
+    // barangay pick) — everything else on the form is optional for them.
+    if (widget.isGuest && _latitude == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please share your location so MDRRMO can find you.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     final resolvedEmergencyType = _selectedEmergency == 'Other'
         ? _otherEmergencyController.text.trim()
         : _selectedEmergency;
@@ -492,9 +508,13 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
 
     if (result.success) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Report submitted.'),
-          backgroundColor: Color(0xFF2E7D32),
+        SnackBar(
+          content: Text(
+            widget.isGuest
+                ? 'Report submitted. MDRRMO will review it shortly.'
+                : 'Report submitted.',
+          ),
+          backgroundColor: const Color(0xFF2E7D32),
         ),
       );
       Navigator.pop(context);
@@ -544,6 +564,40 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (widget.isGuest)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.info_outline,
+                          color: Color(0xFFE65100),
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Guest mode: only your location is required. Photos and a '
+                            'description are optional. MDRRMO reviews guest reports before '
+                            'they reach responders.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[700],
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                 // ── Type of Emergency ───────────────────────────────
                 _fieldLabel('Type of Emergency'),
                 const SizedBox(height: 8),
@@ -812,9 +866,16 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
                               ),
                             ),
                           ),
-                          validator: (v) => (v == null || v.trim().isEmpty)
-                              ? 'Please select or enter the location'
-                              : null,
+                          validator: (v) {
+                            // Guests can rely on GPS/barangay pick alone;
+                            // the coordinate check happens in
+                            // _handleSubmit(). Logged-in citizens keep the
+                            // original "must type/select something" rule.
+                            if (widget.isGuest) return null;
+                            return (v == null || v.trim().isEmpty)
+                                ? 'Please select or enter the location'
+                                : null;
+                          },
                         );
                       },
                   optionsViewBuilder: (context, onSelected, options) {
@@ -871,7 +932,21 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
                 const SizedBox(height: 20),
 
                 // ── Description ─────────────────────────────────────
-                _fieldLabel('Description'),
+                Row(
+                  children: [
+                    _fieldLabel('Description'),
+                    if (widget.isGuest) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '(Optional)',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
                 const SizedBox(height: 8),
 
                 TextFormField(
@@ -923,9 +998,12 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
                       ),
                     ),
                   ),
-                  validator: (v) => (v == null || v.isEmpty)
-                      ? 'Please describe the incident'
-                      : null,
+                  validator: (v) {
+                    if (widget.isGuest) return null;
+                    return (v == null || v.isEmpty)
+                        ? 'Please describe the incident'
+                        : null;
+                  },
                 ),
 
                 const SizedBox(height: 24),
@@ -934,16 +1012,32 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Upload Photos',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.w500,
-                      ),
+                    Row(
+                      children: [
+                        Text(
+                          'Upload Photos',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (widget.isGuest) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '(Optional)',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: Colors.grey[500],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     Text(
-                      '${_pickedImages.length}/$_maxPhotos  (min $_minPhotos required)',
+                      widget.isGuest
+                          ? '${_pickedImages.length}/$_maxPhotos'
+                          : '${_pickedImages.length}/$_maxPhotos  (min $_minPhotos required)',
                       style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600,
@@ -1038,7 +1132,9 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
 
                 const SizedBox(height: 6),
                 Text(
-                  'Upload $_minPhotos to $_maxPhotos photos of the incident.',
+                  widget.isGuest
+                      ? 'Photos are optional as a guest, but help responders prepare.'
+                      : 'Upload $_minPhotos to $_maxPhotos photos of the incident.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[500]),
                 ),
 

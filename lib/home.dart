@@ -53,20 +53,19 @@ class _HomeScreenState extends State<HomeScreen>
     super.dispose();
   }
 
+  // SOS is now available to guests — location (and an optional photo) is
+  // all it ever needed. Guest SOS reports are just held for admin review
+  // before responders are notified (see ApiService.sendSOS +
+  // Api\IncidentController::sos()).
   void _handleSOS() {
-    if (widget.isGuest) {
-      _showLoginRequired(context);
-      return;
-    }
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SOSScreen()),
+      MaterialPageRoute(builder: (_) => SOSScreen(isGuest: widget.isGuest)),
     );
   }
 
   Future<void> _handleRefresh() async {
     if (widget.isGuest) return;
-    // Re-fetch recent alerts and citizen name on pull-to-refresh.
     await Future.wait([
       _alertsCardKey.currentState?.refresh() ?? Future.value(),
       _loadCitizenName(),
@@ -339,20 +338,20 @@ class _HomeTab extends StatelessWidget {
                     mainAxisSpacing: 12,
                     childAspectRatio: 1.0,
                     children: [
+                      // Report Emergency is now available to guests —
+                      // ReportIncidentScreen relaxes its own required
+                      // fields when isGuest is true.
                       _ActionTile(
                         label: 'Report\nEmergency',
                         icon: Icons.warning_amber_rounded,
                         iconColor: const Color(0xFFD32F2F),
                         bgColor: const Color(0xFFFFEBEE),
                         onTap: () {
-                          if (isGuest) {
-                            _showLoginRequired(context);
-                            return;
-                          }
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => const ReportIncidentScreen(),
+                              builder: (_) =>
+                                  ReportIncidentScreen(isGuest: isGuest),
                             ),
                           );
                         },
@@ -711,8 +710,6 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
     _loadAlerts();
   }
 
-  /// Public method so the parent (HomeScreen) can trigger a refresh
-  /// via GlobalKey, e.g. from a RefreshIndicator pull-to-refresh.
   Future<void> refresh() => _loadAlerts();
 
   Future<void> _loadAlerts() async {
