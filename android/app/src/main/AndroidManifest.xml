@@ -23,7 +23,7 @@
         android:maxSdkVersion="28"/>
 
     <application
-        android:label="rescue_pulse"
+        android:label="ResQPulse"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

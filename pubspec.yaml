@@ -25,6 +25,17 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/logo.png"
+  # Android 13+ adaptive icon — reuses the same source image on a plain
+  # background rather than needing a second separate asset.
+  adaptive_icon_background: "#0D1B4C"
+  adaptive_icon_foreground: "assets/logo.png"
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true
@@ -44,4 +55,3 @@ flutter:
     - assets/cut5.png
     - assets/cut6.png
     - assets/cut7.png
-

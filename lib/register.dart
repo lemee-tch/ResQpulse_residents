@@ -760,8 +760,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 _sectionHeader('Create Account'),
                 const SizedBox(height: 16),
 
-                // ── Email + inline "Get Code" / "Resend" ────────────
-                _buildEmailWithOtp(),
+                // ── Email + inline "Get Code" ────────────────────────
+                _buildEmailField(),
 
                 const SizedBox(height: 14),
 
@@ -791,6 +791,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     return null;
                   },
                 ),
+
+                const SizedBox(height: 14),
+
+                // ── Verification Code (now after Password) ──────────
+                _buildVerificationCodeField(),
 
                 const SizedBox(height: 28),
 
@@ -855,11 +860,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// Email field with a "Get Code" / "Resend" button positioned beside
   /// it (a real widget in a Row, not squeezed into suffixIcon — that
-  /// approach clipped/hid the button), plus an ALWAYS-visible 6-digit
-  /// verification code field directly underneath, exactly matching the
-  /// reference layout: both fields on screen together, no separate
-  /// "verify" screen to navigate to.
-  Widget _buildEmailWithOtp() {
+  /// approach clipped/hid the button).
+  Widget _buildEmailField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -932,7 +934,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  /// Verification code field — now rendered after Password in the form,
+  /// but still driven by the same `_otpSent` / `_resendCooldown` state
+  /// from the email block above it.
+  Widget _buildVerificationCodeField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         const Text(
           'Verification Code',
           style: TextStyle(
