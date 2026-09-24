@@ -167,9 +167,24 @@ class _ReportCard extends StatelessWidget {
   IconData get _icon =>
       _typeIcons[report.emergencyType] ?? Icons.warning_amber_rounded;
 
+  /// "Responding: Juan Dela Cruz" / "Responding: Juan Dela Cruz +2 more" —
+  /// same summarizing pattern the responder app's own home screen uses
+  /// (see responder_home.dart's _IncidentCard), so a citizen sees at a
+  /// glance whether anyone from MDRRMO has picked up their report yet,
+  /// without opening it.
+  String? get _teamSummary {
+    if (report.responders.isEmpty) return null;
+    final lead = _sortedResponders(report.responders).first;
+    final name = lead['full_name']?.toString() ?? 'Responder';
+    return report.responders.length == 1
+        ? 'Accepted by: $name'
+        : 'Accepted by: $name +${report.responders.length - 1} backup';
+  }
+
   @override
   Widget build(BuildContext context) {
     final statusStyle = _statusStyle(report.status);
+    final teamSummary = _teamSummary;
 
     return GestureDetector(
       onTap: onTap,
@@ -243,6 +258,31 @@ class _ReportCard extends StatelessWidget {
                     report.location,
                     style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                   ),
+                  if (teamSummary != null) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.shield_outlined,
+                          size: 13,
+                          color: Color(0xFF2E7D32),
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            teamSummary,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF2E7D32),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   Text(
                     report.formattedDate,
@@ -361,9 +401,192 @@ class ReportStatusScreen extends StatelessWidget {
                 dimmed: !reached,
               );
             }),
+
+            // ── RESPONDING TEAM ──────────────────────────────────────
+            // Mirrors the admin "Responding Team" panel on sos-details
+            // .blade.php — same source data (Incident::responders(), the
+            // incident_responder pivot), just rendered for the citizen.
+            // Hidden entirely while nobody has accepted yet, since the
+            // "Pending" timeline step already conveys that.
+            if (report.responders.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Divider(height: 1),
+              const SizedBox(height: 20),
+              Text(
+                report.responders.length == 1
+                    ? 'Responding Team'
+                    : 'Responding Team (${report.responders.length})',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A2E),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ..._sortedResponders(report.responders).asMap().entries.map(
+                (entry) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  // First to accept (earliest pivot.accepted_at) is the
+                  // one who took the mission; anyone who joined after
+                  // them is backup support — mirrors the acceptance
+                  // model in IncidentController::accept() ("First
+                  // acceptance moves the incident out of 'pending';
+                  // later joins are backup").
+                  child: _ResponderTile(
+                    responder: entry.value,
+                    isLead: entry.key == 0,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Earliest pivot.accepted_at first — that responder is the one who
+/// actually accepted the mission; everyone else on the list joined
+/// after them as backup. Responders with no accepted_at (shouldn't
+/// normally happen — accept() always sets it) sort last so they don't
+/// falsely claim the lead spot.
+List<Map<String, dynamic>> _sortedResponders(
+  List<Map<String, dynamic>> responders,
+) {
+  DateTime? acceptedAt(Map<String, dynamic> r) {
+    final pivot = r['pivot'];
+    final raw = pivot is Map ? pivot['accepted_at']?.toString() : null;
+    return DateTime.tryParse(raw ?? '');
+  }
+
+  final sorted = List<Map<String, dynamic>>.from(responders);
+  sorted.sort((a, b) {
+    final da = acceptedAt(a);
+    final db = acceptedAt(b);
+    if (da == null && db == null) return 0;
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return da.compareTo(db);
+  });
+  return sorted;
+}
+
+// ── Responder Tile (one row per team member on "Responding Team") ─────────
+
+class _ResponderTile extends StatelessWidget {
+  final Map<String, dynamic> responder;
+  final bool isLead;
+  const _ResponderTile({required this.responder, required this.isLead});
+
+  String get _name => responder['full_name']?.toString() ?? 'Responder';
+  String? get _agency => responder['agency']?.toString();
+
+  String? get _joinedAt {
+    final pivot = responder['pivot'];
+    final raw = pivot is Map ? pivot['accepted_at']?.toString() : null;
+    final date = DateTime.tryParse(raw ?? '')?.toLocal();
+    if (date == null) return null;
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final hour12 = date.hour % 12 == 0 ? 12 : date.hour % 12;
+    final minute = date.minute.toString().padLeft(2, '0');
+    final period = date.hour >= 12 ? 'PM' : 'AM';
+    final prefix = isLead ? 'Accepted' : 'Backed up';
+    return '$prefix ${months[date.month - 1]} ${date.day}, $hour12:$minute $period';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitleParts = [
+      if (_agency != null && _agency!.isNotEmpty) _agency!,
+    ];
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: isLead ? const Color(0xFFD1FAE5) : const Color(0xFFE0F2FE),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            isLead ? Icons.shield_moon : Icons.shield_outlined,
+            color: isLead ? const Color(0xFF065F46) : const Color(0xFF1E40AF),
+            size: 18,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      _name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: Color(0xFF1A1A2E),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isLead
+                          ? const Color(0xFFD1FAE5)
+                          : const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      isLead ? 'Accepted mission' : 'Backup',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                        color: isLead
+                            ? const Color(0xFF065F46)
+                            : const Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (subtitleParts.isNotEmpty)
+                Text(
+                  subtitleParts.join(' · '),
+                  style: TextStyle(fontSize: 12.5, color: Colors.grey[600]),
+                ),
+              if (_joinedAt != null)
+                Text(
+                  _joinedAt!,
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey[400]),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -478,6 +701,7 @@ class _ReportData {
   final String description;
   final String status;
   final DateTime? createdAt;
+  final List<Map<String, dynamic>> responders;
 
   const _ReportData({
     required this.id,
@@ -486,6 +710,7 @@ class _ReportData {
     required this.description,
     required this.status,
     required this.createdAt,
+    required this.responders,
   });
 
   factory _ReportData.fromJson(Map<String, dynamic> json) {
@@ -498,6 +723,18 @@ class _ReportData {
       createdAt: DateTime.tryParse(
         json['created_at']?.toString() ?? '',
       )?.toLocal(),
+      // Comes straight from Incident::with('responders') on the backend
+      // (IncidentController::mine) — each entry carries full_name,
+      // agency, badge_number and a pivot.accepted_at, same shape the
+      // admin's sos-details.blade.php "Responding Team" panel already
+      // reads. Defensive parsing since older cached responses or a
+      // report with no one assigned yet may not carry the key at all.
+      responders: (json['responders'] is List)
+          ? (json['responders'] as List)
+                .whereType<Map>()
+                .map((r) => Map<String, dynamic>.from(r))
+                .toList()
+          : <Map<String, dynamic>>[],
     );
   }
 
