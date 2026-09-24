@@ -3,6 +3,7 @@ import 'api_service.dart';
 import 'login.dart';
 import 'home.dart';
 import 'hotlines.dart';
+import 'edit_profile.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -36,6 +37,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (route) => false,
     );
+  }
+
+  /// Opens the edit-profile form pre-filled with the current record.
+  /// EditProfileScreen pops with the fresh citizen record (already
+  /// cached locally by ApiService.updateProfile) on a successful save,
+  /// so this just swaps it into state — no extra network round-trip.
+  Future<void> _handleEditProfile() async {
+    if (_citizen == null) return;
+    final updated = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(builder: (_) => EditProfileScreen(citizen: _citizen!)),
+    );
+    if (updated != null && mounted) {
+      setState(() => _citizen = updated);
+    }
   }
 
   Widget _verificationBadge(String status) {
@@ -209,7 +225,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _MenuItem(
                           icon: Icons.account_circle_outlined,
                           label: 'Personal Information',
-                          onTap: () {},
+                          // Was a no-op stub — now opens the real
+                          // edit-profile form (see edit_profile.dart).
+                          onTap: _handleEditProfile,
                         ),
                         const SizedBox(height: 12),
                         _MenuItem(

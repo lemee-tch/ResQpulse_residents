@@ -301,6 +301,60 @@ class ApiService {
     }
   }
 
+  /// Edit Profile screen — updates name, mobile and address fields for
+  /// the logged-in citizen. Email and password are deliberately not
+  /// editable here (see AuthController::updateProfile's doc comment).
+  /// Saves the fresh citizen record locally on success so every screen
+  /// reading getUser() immediately reflects the change, no extra
+  /// getMe() round-trip needed.
+  static Future<ApiResponse> updateProfile({
+    required String firstName,
+    String? middleName,
+    required String lastName,
+    String? suffix,
+    required String mobile,
+    required String barangay,
+    String? street,
+    String? zone,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http
+          .patch(
+            Uri.parse('$baseUrl/profile'),
+            headers: headers,
+            body: jsonEncode({
+              'first_name': firstName,
+              'middle_name': middleName,
+              'last_name': lastName,
+              'suffix': suffix,
+              'mobile': mobile,
+              'barangay': barangay,
+              'street': street,
+              'zone': zone,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
+        await saveUser(data['citizen']);
+        return ApiResponse.success(data);
+      }
+      if (response.statusCode == 401) await _forceGuestMode();
+      if (data['errors'] != null) {
+        final errors = data['errors'] as Map<String, dynamic>;
+        final firstError = errors.values.first;
+        final msg = firstError is List ? firstError.first : firstError;
+        return ApiResponse.error(msg.toString());
+      }
+      return ApiResponse.error(data['message'] ?? 'Could not update profile.');
+    } catch (e) {
+      return ApiResponse.error(_handleError(e));
+    }
+  }
+
   static Future<ApiResponse> getAlerts() async {
     try {
       final headers = await _authHeaders();
