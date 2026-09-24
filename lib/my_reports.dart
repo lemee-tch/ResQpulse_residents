@@ -495,7 +495,9 @@ class _ReportData {
       location: json['location']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       status: json['status']?.toString() ?? 'pending',
-      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      createdAt: DateTime.tryParse(
+        json['created_at']?.toString() ?? '',
+      )?.toLocal(),
     );
   }
 

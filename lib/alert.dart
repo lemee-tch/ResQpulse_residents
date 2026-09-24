@@ -53,16 +53,15 @@ class _AlertsScreenState extends State<AlertsScreen> {
   /// scrolling; "Alert History" = everything ever broadcast. These are
   /// the two tab labels verbatim — matching on 'Recent' alone used to
   /// silently fail and made both tabs show the identical full list.
-  /// "Recent alerts" = broadcast within the last 7 days — an actual time
-  /// window, not just "the newest few regardless of age." Count-based
-  /// filtering (latest 5) put a 3-week-old alert under "Recent" just
-  /// because nothing newer existed, and made "Alert History" permanently
-  /// empty whenever there were 5 or fewer alerts total. "Alert History"
-  /// is the full archive — everything, including whatever's in Recent
-  /// too, since that's what an archive is.
+  /// "Recent alerts" = broadcast within the last 24 hours — an actual
+  /// time window, not just "the newest few regardless of age." A wider
+  /// window (this used to be 7 days) kept days-old alerts showing under
+  /// "Recent" long after they stopped being recent. "Alert History" is
+  /// the full archive — everything, including whatever's in Recent too,
+  /// since that's what an archive is.
   List<_AlertData> get _filtered {
     if (_selectedTab == 'Recent alerts') {
-      final cutoff = DateTime.now().subtract(const Duration(days: 7));
+      final cutoff = DateTime.now().subtract(const Duration(hours: 24));
       return _allAlerts
           .where((a) => a.createdAt != null && a.createdAt!.isAfter(cutoff))
           .toList();
@@ -233,7 +232,14 @@ class _AlertData {
       subtitle: json['subtitle'],
       body: json['body'],
       dateTime: _formatDate(json['created_at']),
-      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      // The API sends a UTC-flagged timestamp (e.g. "...Z" or "+00:00").
+      // DateTime.tryParse() keeps that UTC flag, so every .hour/.day
+      // read off it — including the "Recent alerts" 24h cutoff above —
+      // was silently 8 hours behind Manila time until this is converted
+      // with .toLocal(). This is the field that filter actually reads.
+      createdAt: DateTime.tryParse(
+        json['created_at']?.toString() ?? '',
+      )?.toLocal(),
       type: json['type'] ?? 'Alerts',
     );
   }
@@ -255,7 +261,10 @@ class _AlertData {
 
   static String _formatDate(String? isoString) {
     if (isoString == null) return '';
-    final date = DateTime.tryParse(isoString);
+    // Same fix as createdAt above — without .toLocal() this renders the
+    // raw UTC wall-clock time on screen instead of Manila (UTC+8) time,
+    // which is why the displayed timestamp was 8 hours off.
+    final date = DateTime.tryParse(isoString)?.toLocal();
     if (date == null) return '';
 
     final month = _months[date.month - 1];

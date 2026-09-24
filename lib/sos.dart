@@ -24,6 +24,25 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
   double _holdProgress = 0.0;
   Timer? _holdTimer;
 
+  // ── Type of Emergency ──
+  // Picked before holding the SOS button — sent alongside the alert so
+  // MDRRMO sees more than a bare "SOS Emergency" (e.g. "SOS Alert —
+  // Accident"), and passed to the backend as a hint for the photo's AI
+  // analysis (see Api\IncidentController::sos() /
+  // ImageAnalysisService::classify()). Same list as the regular report
+  // screen so the two stay consistent.
+  String _selectedEmergency = 'Fire';
+  final _otherEmergencyController = TextEditingController();
+  final List<String> _emergencyTypes = [
+    'Fire',
+    'Flood',
+    'Earthquake',
+    'Accident',
+    'Medical Emergency',
+    'Landslide',
+    'Other',
+  ];
+
   // ── Camera state ──
   CameraController? _cameraController;
   bool _cameraReady = false;
@@ -74,6 +93,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     _liveDotController.dispose();
     _holdTimer?.cancel();
     _cameraController?.dispose();
+    _otherEmergencyController.dispose();
     super.dispose();
   }
 
@@ -185,6 +205,19 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     });
   }
 
+  /// What actually gets sent to the server — the free-typed "Other" text
+  /// when that's selected, otherwise the picked category. Null (not an
+  /// empty string) when there's nothing usable, so the backend's
+  /// "?: null" treats a blank "Other" the same as never having picked
+  /// anything.
+  String? get _resolvedEmergencyType {
+    if (_selectedEmergency == 'Other') {
+      final other = _otherEmergencyController.text.trim();
+      return other.isEmpty ? null : other;
+    }
+    return _selectedEmergency;
+  }
+
   Future<void> _triggerSOS() async {
     HapticFeedback.heavyImpact();
     setState(() {
@@ -216,6 +249,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
         latitude: position.latitude,
         longitude: position.longitude,
         photo: photo,
+        emergencyType: _resolvedEmergencyType,
       );
 
       if (!mounted) return;
@@ -368,6 +402,155 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                   ),
                 ),
 
+              // ── Type of Emergency ─────────────────────────────────
+              // Picked before the hold-to-send button so it's locked in
+              // by the time the 3-second hold captures the photo — once
+              // sending starts (or the alert's already sent) this is
+              // shown read-only instead of hidden outright, so it's
+              // still clear what was reported.
+              if (!_sosSent) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Type of Emergency',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(
+                        0xFF1A1A2E,
+                      ).withOpacity(_isSending ? 0.5 : 1),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                IgnorePointer(
+                  ignoring: _isSending,
+                  child: Opacity(
+                    opacity: _isSending ? 0.6 : 1,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        border: Border.all(
+                          color: Colors.grey[300]!,
+                          width: 1.5,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedEmergency,
+                          isExpanded: true,
+                          icon: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: Color(0xFF1A1A2E),
+                          ),
+                          style: const TextStyle(
+                            color: Color(0xFF1A1A2E),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          items: _emergencyTypes
+                              .map(
+                                (type) => DropdownMenuItem(
+                                  value: type,
+                                  child: Text(type),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setState(() => _selectedEmergency = val);
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                if (_selectedEmergency == 'Other') ...[
+                  const SizedBox(height: 10),
+                  IgnorePointer(
+                    ignoring: _isSending,
+                    child: Opacity(
+                      opacity: _isSending ? 0.6 : 1,
+                      child: TextField(
+                        controller: _otherEmergencyController,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: Color(0xFF1A1A2E),
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Please specify the emergency type',
+                          hintStyle: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 14,
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 15,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: Colors.grey[300]!,
+                              width: 1.5,
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: Colors.grey[300]!,
+                              width: 1.5,
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFD32F2F),
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ] else if (_resolvedEmergencyType != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.local_fire_department_outlined,
+                          color: Color(0xFF2E7D32),
+                          size: 18,
+                        ),
+                        Text(
+                          'Reported as: $_resolvedEmergencyType',
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF2E7D32),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
               // ── Headline + subtitle ──────────────────────────────
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
@@ -384,7 +567,6 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                   ),
                 ),
               ),
-              const SizedBox(height: 6),
               Text(
                 _sosSent
                     ? (widget.isGuest
@@ -392,7 +574,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                           : 'MDRRMO has received your live location and photo.')
                     : (_isSending
                           ? 'Capturing photo and sharing your GPS location.'
-                          : 'Press and hold the button below for 3 seconds.'),
+                          : ''),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 13,

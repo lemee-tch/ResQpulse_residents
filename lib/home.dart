@@ -738,8 +738,9 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
 
   String _timeAgo(String? createdAt) {
     if (createdAt == null) return '';
-    final date = DateTime.tryParse(createdAt);
-    if (date == null) return '';
+    final parsed = DateTime.tryParse(createdAt);
+    if (parsed == null) return '';
+    final date = parsed.toLocal();
     final diff = DateTime.now().difference(date);
     if (diff.inMinutes < 1) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';

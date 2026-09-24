@@ -426,10 +426,17 @@ class ApiService {
   /// SOS panic button — sends GPS coordinates and an optional photo.
   /// Deliberately lightweight (single photo, no min-count) since this
   /// needs to fire within the 3-second hold window.
+  ///
+  /// [emergencyType] is what the citizen picked on the SOS screen's new
+  /// "Type of Emergency" dropdown before holding the button (Fire,
+  /// Flood, Accident, etc., or their own text for "Other"). It's
+  /// optional so the button still works if it's ever null (shouldn't
+  /// happen from the current sos.dart, but keeps this call resilient).
   static Future<ApiResponse> sendSOS({
     required double latitude,
     required double longitude,
     File? photo,
+    String? emergencyType,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/incidents/sos');
@@ -441,6 +448,9 @@ class ApiService {
 
       request.fields['latitude'] = latitude.toString();
       request.fields['longitude'] = longitude.toString();
+      if (emergencyType != null && emergencyType.trim().isNotEmpty) {
+        request.fields['emergency_type'] = emergencyType.trim();
+      }
 
       if (photo != null) {
         request.files.add(
