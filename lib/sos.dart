@@ -16,22 +16,33 @@ class SOSScreen extends StatefulWidget {
 }
 
 class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
-  // ── Hold-to-send state ──
-  bool _isPressing = false;
+  // ── Tap → capture → confirm / retake → send state ──
+  //
+  // Flow:
+  //   0. The citizen first picks the type of emergency
+  //      (_typeConfirmed) — the camera is hidden until they do.
+  //   1. One tap on the SOS button instantly captures a photo
+  //      (_isCapturing).
+  //   2. The photo is frozen in the preview box and the user is asked to
+  //      confirm (_awaitingConfirm): "Retake" goes back to the live
+  //      camera, "Send SOS" actually fires the alert.
+  //   3. Nothing is sent to MDRRMO until the user confirms, so an
+  //      accidental tap can never raise a false alert.
+  bool _typeConfirmed = false; // step 1 done → camera is shown
+  bool _isCapturing = false;
+  bool _awaitingConfirm = false;
   bool _isSending = false;
   bool _sosSent = false;
   String? _sendError;
-  double _holdProgress = 0.0;
-  Timer? _holdTimer;
 
   // ── Type of Emergency ──
-  // Picked before holding the SOS button — sent alongside the alert so
+  // Picked FIRST (before the camera is shown) — sent alongside the alert so
   // MDRRMO sees more than a bare "SOS Emergency" (e.g. "SOS Alert —
   // Accident"), and passed to the backend as a hint for the photo's AI
   // analysis (see Api\IncidentController::sos() /
   // ImageAnalysisService::classify()). Same list as the regular report
   // screen so the two stay consistent.
-  String _selectedEmergency = 'Fire';
+  String? _selectedEmergency; // null until the citizen picks one
   final _otherEmergencyController = TextEditingController();
   final List<String> _emergencyTypes = [
     'Fire',
@@ -91,7 +102,6 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     _pulseController.dispose();
     _waveController.dispose();
     _liveDotController.dispose();
-    _holdTimer?.cancel();
     _cameraController?.dispose();
     _otherEmergencyController.dispose();
     super.dispose();
@@ -103,6 +113,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
+        if (!mounted) return;
         setState(() => _cameraError = 'No camera available on this device.');
         return;
       }
@@ -172,36 +183,47 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ── Hold-to-send handlers ──────────────────────────────────────────
+  // ── Tap-to-capture / retake / confirm handlers ─────────────────────
 
-  void _onPressStart() {
-    if (_sosSent || _isSending) return;
-    HapticFeedback.lightImpact();
+  /// Step 1 — a single tap on the SOS button takes the photo right away.
+  /// Nothing is sent yet; the user gets to review it first.
+  Future<void> _onSosTap() async {
+    if (_sosSent || _isSending || _isCapturing || _awaitingConfirm) return;
+    HapticFeedback.mediumImpact();
     setState(() {
-      _isPressing = true;
+      _isCapturing = true;
       _sendError = null;
     });
 
-    const totalMs = 3000;
-    const intervalMs = 50;
-    int elapsed = 0;
-
-    _holdTimer = Timer.periodic(const Duration(milliseconds: intervalMs), (t) {
-      elapsed += intervalMs;
-      setState(() => _holdProgress = elapsed / totalMs);
-      if (elapsed >= totalMs) {
-        t.cancel();
-        _triggerSOS();
+    File? photo;
+    if (_cameraReady && _cameraController != null) {
+      try {
+        final XFile file = await _cameraController!.takePicture();
+        photo = File(file.path);
+      } catch (e) {
+        debugPrint('SOS photo capture failed: $e');
       }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _capturedPhoto = photo;
+      _isCapturing = false;
+      // Even if the camera failed we still move to the confirm step, so
+      // the user can send their location without a photo instead of being
+      // stuck unable to call for help.
+      _awaitingConfirm = true;
     });
   }
 
-  void _onPressEnd() {
-    if (_sosSent || _isSending) return;
-    _holdTimer?.cancel();
+  /// Step 2a — discard the photo and go back to the live camera.
+  void _retake() {
+    if (_isSending) return;
+    HapticFeedback.selectionClick();
     setState(() {
-      _isPressing = false;
-      _holdProgress = 0.0;
+      _capturedPhoto = null;
+      _awaitingConfirm = false;
+      _sendError = null;
     });
   }
 
@@ -218,25 +240,15 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     return _selectedEmergency;
   }
 
-  Future<void> _triggerSOS() async {
+  /// Step 2b — the user confirmed the photo; send the alert.
+  Future<void> _confirmAndSendSOS() async {
+    if (_isSending || _sosSent) return;
     HapticFeedback.heavyImpact();
     setState(() {
-      _isPressing = false;
       _isSending = true;
-      _holdProgress = 1.0;
+      _sendError = null;
       _locationStatus = 'Sending your location...';
     });
-
-    File? photo;
-    if (_cameraReady && _cameraController != null) {
-      try {
-        final XFile file = await _cameraController!.takePicture();
-        photo = File(file.path);
-        if (mounted) setState(() => _capturedPhoto = photo);
-      } catch (e) {
-        debugPrint('SOS photo capture failed: $e');
-      }
-    }
 
     try {
       final position = await _getCurrentLocation();
@@ -248,7 +260,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
       final result = await ApiService.sendSOS(
         latitude: position.latitude,
         longitude: position.longitude,
-        photo: photo,
+        photo: _capturedPhoto,
         emergencyType: _resolvedEmergencyType,
       );
 
@@ -258,6 +270,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
         setState(() {
           _sosSent = true;
           _isSending = false;
+          _awaitingConfirm = false;
           _locationStatus = widget.isGuest
               ? 'Location sent — awaiting MDRRMO review'
               : 'Location sent to MDRRMO';
@@ -274,9 +287,10 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           ),
         );
       } else {
+        // Stay on the confirm step (photo kept) so the user can just
+        // press "Send SOS" again.
         setState(() {
           _isSending = false;
-          _holdProgress = 0.0;
           _sendError = result.error;
           _locationStatus = result.error ?? 'Failed to send location';
         });
@@ -293,7 +307,6 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
       if (!mounted) return;
       setState(() {
         _isSending = false;
-        _holdProgress = 0.0;
         _sendError = e.toString();
         _locationStatus = e.toString();
       });
@@ -332,8 +345,27 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
   String get _headlineText {
     if (_sosSent) return 'Alert Sent';
     if (_isSending) return 'Sending Your Alert...';
-    if (_isPressing) return 'Keep Holding...';
+    if (_isCapturing) return 'Capturing Photo...';
+    if (_awaitingConfirm) return 'Confirm Your Photo';
     return '';
+  }
+
+  String get _subtitleText {
+    if (_sosSent) {
+      return widget.isGuest
+          ? 'MDRRMO has received your location and will review it shortly.'
+          : (_capturedPhoto != null
+                ? 'MDRRMO has received your live location and photo.'
+                : 'MDRRMO has received your live location.');
+    }
+    if (_isSending) return 'Sharing your GPS location and photo.';
+    if (_isCapturing) return 'Hold your phone steady.';
+    if (_awaitingConfirm) {
+      return _capturedPhoto != null
+          ? 'Happy with this photo? Send the alert, or retake it.'
+          : 'No photo was captured. You can still send your location.';
+    }
+    return 'Tap the button below to capture a photo.';
   }
 
   @override
@@ -402,398 +434,159 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                   ),
                 ),
 
-              // ── Type of Emergency ─────────────────────────────────
-              // Picked before the hold-to-send button so it's locked in
-              // by the time the 3-second hold captures the photo — once
-              // sending starts (or the alert's already sent) this is
-              // shown read-only instead of hidden outright, so it's
-              // still clear what was reported.
-              if (!_sosSent) ...[
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Type of Emergency',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(
-                        0xFF1A1A2E,
-                      ).withOpacity(_isSending ? 0.5 : 1),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                IgnorePointer(
-                  ignoring: _isSending,
-                  child: Opacity(
-                    opacity: _isSending ? 0.6 : 1,
+              // ── Type of Emergency (STEP 1) ────────────────────────
+              // The citizen picks the emergency type FIRST. Only after they
+              // continue does the camera appear (step 2), and the chosen
+              // type is sent with the SOS so the backend's AI photo
+              // analysis can use it as a guide (see
+              // Api\IncidentController::sos() / ImageAnalysisService).
+              if (_sosSent) ...[
+                if (_resolvedEmergencyType != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border.all(
-                          color: Colors.grey[300]!,
-                          width: 1.5,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xFFE8F5E9),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: _selectedEmergency,
-                          isExpanded: true,
-                          icon: const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            color: Color(0xFF1A1A2E),
-                          ),
-                          style: const TextStyle(
-                            color: Color(0xFF1A1A2E),
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          items: _emergencyTypes
-                              .map(
-                                (type) => DropdownMenuItem(
-                                  value: type,
-                                  child: Text(type),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (val) {
-                            if (val != null) {
-                              setState(() => _selectedEmergency = val);
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                if (_selectedEmergency == 'Other') ...[
-                  const SizedBox(height: 10),
-                  IgnorePointer(
-                    ignoring: _isSending,
-                    child: Opacity(
-                      opacity: _isSending ? 0.6 : 1,
-                      child: TextField(
-                        controller: _otherEmergencyController,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          color: Color(0xFF1A1A2E),
-                        ),
-                        decoration: InputDecoration(
-                          hintText: 'Please specify the emergency type',
-                          hintStyle: TextStyle(
-                            color: Colors.grey[400],
-                            fontSize: 14,
-                          ),
-                          filled: true,
-                          fillColor: Colors.white,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 15,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: Colors.grey[300]!,
-                              width: 1.5,
-                            ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: Colors.grey[300]!,
-                              width: 1.5,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFD32F2F),
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ] else if (_resolvedEmergencyType != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8F5E9),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.local_fire_department_outlined,
-                          color: Color(0xFF2E7D32),
-                          size: 18,
-                        ),
-                        Text(
-                          'Reported as: $_resolvedEmergencyType',
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF2E7D32),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-              // ── Headline + subtitle ──────────────────────────────
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: Text(
-                  _headlineText,
-                  key: ValueKey(_headlineText),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: _sosSent
-                        ? const Color(0xFF2E7D32)
-                        : const Color(0xFF1A1A2E),
-                  ),
-                ),
-              ),
-              Text(
-                _sosSent
-                    ? (widget.isGuest
-                          ? 'MDRRMO has received your location and will review it shortly.'
-                          : 'MDRRMO has received your live location and photo.')
-                    : (_isSending
-                          ? 'Capturing photo and sharing your GPS location.'
-                          : ''),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[600],
-                  height: 1.4,
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // ── Camera preview / captured photo box ──────────────
-              Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(22),
-                    child: AspectRatio(
-                      aspectRatio: 1,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.black12,
-                          border: Border.all(
-                            color: _sosSent
-                                ? const Color(0xFF2E7D32).withOpacity(0.4)
-                                : Colors.grey[300]!,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: _buildPhotoBox(),
-                      ),
-                    ),
-                  ),
-                  // LIVE badge
-                  if (!_sosSent && _capturedPhoto == null)
-                    Positioned(
-                      top: 12,
-                      left: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.55),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                      ),
-                    ),
-                  // Captured confirmation badge
-                  if (_capturedPhoto != null)
-                    Positioned(
-                      top: 12,
-                      left: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2E7D32).withOpacity(0.9),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.check_circle,
-                              color: Colors.white,
-                              size: 13,
-                            ),
-                            SizedBox(width: 5),
-                            Text(
-                              'CAPTURED',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-
-              const SizedBox(height: 32),
-
-              // ── Press & Hold SOS Button ─────────────────────────
-              GestureDetector(
-                onTapDown: (_) => _onPressStart(),
-                onTapUp: (_) => _onPressEnd(),
-                onTapCancel: _onPressEnd,
-                child: SizedBox(
-                  width: 190,
-                  height: 190,
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([_waveController, _pulseAnim]),
-                    builder: (context, child) {
-                      return Stack(
-                        alignment: Alignment.center,
+                      child: Row(
                         children: [
-                          _buildWave(
-                            _waveController,
-                            const Interval(0.0, 1.0, curve: Curves.easeOut),
-                            95,
+                          const Icon(
+                            Icons.local_fire_department_outlined,
+                            color: Color(0xFF2E7D32),
+                            size: 18,
                           ),
-                          _buildWave(
-                            _waveController,
-                            const Interval(0.3, 1.0, curve: Curves.easeOut),
-                            83,
-                          ),
-                          _buildWave(
-                            _waveController,
-                            const Interval(0.6, 1.0, curve: Curves.easeOut),
-                            72,
-                          ),
-                          SizedBox(
-                            width: 140,
-                            height: 140,
-                            child: CircularProgressIndicator(
-                              value: 1,
-                              strokeWidth: 5,
-                              backgroundColor: Colors.transparent,
-                              valueColor: AlwaysStoppedAnimation(
-                                Colors.grey.withOpacity(0.15),
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 140,
-                            height: 140,
-                            child: _isSending
-                                ? const CircularProgressIndicator(
-                                    strokeWidth: 5,
-                                    valueColor: AlwaysStoppedAnimation(
-                                      Color(0xFFD32F2F),
-                                    ),
-                                  )
-                                : CircularProgressIndicator(
-                                    value: _holdProgress,
-                                    strokeWidth: 5,
-                                    backgroundColor: Colors.transparent,
-                                    valueColor: AlwaysStoppedAnimation(
-                                      _sosSent
-                                          ? const Color(0xFF2E7D32)
-                                          : const Color(0xFFD32F2F),
-                                    ),
-                                  ),
-                          ),
-                          Transform.scale(
-                            scale: _isPressing ? 0.95 : _pulseAnim.value,
-                            child: Container(
-                              width: 122,
-                              height: 122,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: _sosSent
-                                      ? [
-                                          const Color(0xFF2E7D32),
-                                          const Color(0xFF43A047),
-                                        ]
-                                      : [
-                                          const Color(0xFFD32F2F),
-                                          const Color(0xFFB71C1C),
-                                        ],
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color:
-                                        (_sosSent ? Colors.green : Colors.red)
-                                            .withOpacity(0.4),
-                                    blurRadius: 22,
-                                    spreadRadius: 3,
-                                  ),
-                                ],
-                              ),
-                              child: Center(
-                                child: _sosSent
-                                    ? const Icon(
-                                        Icons.check_circle,
-                                        color: Colors.white,
-                                        size: 42,
-                                      )
-                                    : const Text(
-                                        'SOS',
-                                        style: TextStyle(
-                                          fontSize: 32,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                          letterSpacing: 2,
-                                        ),
-                                      ),
-                              ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Reported as: $_resolvedEmergencyType',
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF2E7D32),
                             ),
                           ),
                         ],
-                      );
-                    },
+                      ),
+                    ),
+                  ),
+              ] else if (_typeConfirmed)
+                _buildTypeSummary(),
+
+              if (_typeConfirmed || _sosSent) ...[
+                // ── Headline + subtitle ──────────────────────────────
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: Text(
+                    _headlineText,
+                    key: ValueKey(_headlineText),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: _sosSent
+                          ? const Color(0xFF2E7D32)
+                          : const Color(0xFF1A1A2E),
+                    ),
                   ),
                 ),
-              ),
-
-              const SizedBox(height: 10),
-
-              if (!_sosSent && !_isSending)
+                const SizedBox(height: 6),
                 Text(
-                  _isPressing
-                      ? 'Release to cancel'
-                      : 'Press and hold for 3 seconds',
+                  _subtitleText,
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey[500],
+                    fontSize: 13,
+                    color: Colors.grey[600],
+                    height: 1.4,
                   ),
                 ),
+
+                const SizedBox(height: 20),
+
+                // ── Camera preview / captured photo box ──────────────
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: AspectRatio(
+                        aspectRatio: 1,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black12,
+                            border: Border.all(
+                              color: _sosSent
+                                  ? const Color(0xFF2E7D32).withOpacity(0.4)
+                                  : Colors.grey[300]!,
+                              width: 1.5,
+                            ),
+                          ),
+                          child: _buildPhotoBox(),
+                        ),
+                      ),
+                    ),
+                    // Captured confirmation badge
+                    if (_capturedPhoto != null)
+                      Positioned(
+                        top: 12,
+                        left: 12,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2E7D32).withOpacity(0.9),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.check_circle,
+                                color: Colors.white,
+                                size: 13,
+                              ),
+                              SizedBox(width: 5),
+                              Text(
+                                'CAPTURED',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+
+                const SizedBox(height: 28),
+
+                // ── SOS button (tap to capture) OR confirm / retake ──
+                if (_awaitingConfirm && !_sosSent)
+                  _buildConfirmPanel()
+                else ...[
+                  _buildSosButton(),
+                  const SizedBox(height: 10),
+                  if (!_sosSent && !_isCapturing)
+                    Text(
+                      'Tap once to capture a photo',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                ],
+              ] else
+                _buildTypePicker(),
 
               const SizedBox(height: 28),
 
@@ -882,6 +675,378 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     );
   }
 
+  // ── STEP 1: pick the type of emergency (camera stays hidden) ──────
+
+  bool get _canContinueFromType =>
+      _selectedEmergency != null &&
+      (_selectedEmergency != 'Other' ||
+          _otherEmergencyController.text.trim().isNotEmpty);
+
+  void _confirmType() {
+    if (!_canContinueFromType) return;
+    FocusScope.of(context).unfocus();
+    HapticFeedback.selectionClick();
+    setState(() => _typeConfirmed = true);
+  }
+
+  /// Back to step 1 — drops any captured photo, since the photo was
+  /// taken for the previous type.
+  void _changeType() {
+    if (_isSending || _isCapturing) return;
+    setState(() {
+      _typeConfirmed = false;
+      _awaitingConfirm = false;
+      _capturedPhoto = null;
+      _sendError = null;
+    });
+  }
+
+  Widget _buildTypePicker() {
+    final borderSide = BorderSide(color: Colors.grey[300]!, width: 1.5);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'What type of emergency is it?',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1A1A2E),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Choose the emergency type first. The camera opens right after, and '
+          'your choice helps the system understand your photo.',
+          style: TextStyle(fontSize: 13, color: Colors.grey[600], height: 1.4),
+        ),
+        const SizedBox(height: 18),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.grey[300]!, width: 1.5),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _selectedEmergency,
+              isExpanded: true,
+              hint: Text(
+                'Select type of emergency',
+                style: TextStyle(
+                  color: Colors.grey[500],
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              icon: const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Color(0xFF1A1A2E),
+              ),
+              style: const TextStyle(
+                color: Color(0xFF1A1A2E),
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
+              items: _emergencyTypes
+                  .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                  .toList(),
+              onChanged: (val) {
+                if (val == null) return;
+                setState(() => _selectedEmergency = val);
+                // Every standard type opens the camera straight away.
+                // "Other" first needs the user to describe it.
+                if (val != 'Other') _confirmType();
+              },
+            ),
+          ),
+        ),
+        if (_selectedEmergency == 'Other') ...[
+          const SizedBox(height: 10),
+          TextField(
+            controller: _otherEmergencyController,
+            onChanged: (_) => setState(() {}),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _confirmType(),
+            textCapitalization: TextCapitalization.sentences,
+            style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A2E)),
+            decoration: InputDecoration(
+              hintText: 'Please specify the emergency type',
+              hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 15,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: borderSide,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: borderSide,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: Color(0xFFD32F2F),
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (_selectedEmergency == 'Other') ...[
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: ElevatedButton.icon(
+              onPressed: _canContinueFromType ? _confirmType : null,
+              icon: const Icon(Icons.camera_alt_rounded, size: 20),
+              label: const Text(
+                'Continue to Camera',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFD32F2F),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey[300],
+                disabledForegroundColor: Colors.grey[500],
+                elevation: 3,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Compact "Emergency type: Fire — Change" bar shown above the camera.
+  Widget _buildTypeSummary() {
+    final locked = _isSending || _isCapturing;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!, width: 1.2),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.warning_amber_rounded,
+            color: Color(0xFFD32F2F),
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _resolvedEmergencyType ?? 'Emergency',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF1A1A2E),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: locked ? null : _changeType,
+            child: const Text(
+              'Change',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Big round SOS button (single tap captures the photo) ──────────
+
+  Widget _buildSosButton() {
+    final busy = _isCapturing || _isSending;
+    return GestureDetector(
+      onTap: _onSosTap,
+      child: SizedBox(
+        width: 190,
+        height: 190,
+        child: AnimatedBuilder(
+          animation: Listenable.merge([_waveController, _pulseAnim]),
+          builder: (context, child) {
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                _buildWave(
+                  _waveController,
+                  const Interval(0.0, 1.0, curve: Curves.easeOut),
+                  95,
+                ),
+                _buildWave(
+                  _waveController,
+                  const Interval(0.3, 1.0, curve: Curves.easeOut),
+                  83,
+                ),
+                _buildWave(
+                  _waveController,
+                  const Interval(0.6, 1.0, curve: Curves.easeOut),
+                  72,
+                ),
+                SizedBox(
+                  width: 140,
+                  height: 140,
+                  child: busy
+                      ? const CircularProgressIndicator(
+                          strokeWidth: 5,
+                          valueColor: AlwaysStoppedAnimation(Color(0xFFD32F2F)),
+                        )
+                      : CircularProgressIndicator(
+                          value: 1,
+                          strokeWidth: 5,
+                          backgroundColor: Colors.transparent,
+                          valueColor: AlwaysStoppedAnimation(
+                            _sosSent
+                                ? const Color(0xFF2E7D32)
+                                : Colors.grey.withOpacity(0.15),
+                          ),
+                        ),
+                ),
+                Transform.scale(
+                  scale: _pulseAnim.value,
+                  child: Container(
+                    width: 122,
+                    height: 122,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: _sosSent
+                            ? [const Color(0xFF2E7D32), const Color(0xFF43A047)]
+                            : [
+                                const Color(0xFFD32F2F),
+                                const Color(0xFFB71C1C),
+                              ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_sosSent ? Colors.green : Colors.red)
+                              .withOpacity(0.4),
+                          blurRadius: 22,
+                          spreadRadius: 3,
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: _sosSent
+                          ? const Icon(
+                              Icons.check_circle,
+                              color: Colors.white,
+                              size: 42,
+                            )
+                          : const Text(
+                              'SOS',
+                              style: TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ── Confirm / Retake panel (shown after the photo is captured) ────
+
+  Widget _buildConfirmPanel() {
+    return Column(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          height: 54,
+          child: ElevatedButton.icon(
+            onPressed: _isSending ? null : _confirmAndSendSOS,
+            icon: _isSending
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.send_rounded, size: 20),
+            label: Text(
+              _isSending
+                  ? 'Sending...'
+                  : (_sendError != null ? 'Try Again — Send SOS' : 'Send SOS'),
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFD32F2F),
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: const Color(0xFFD32F2F).withOpacity(0.6),
+              disabledForegroundColor: Colors.white,
+              elevation: 3,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: OutlinedButton.icon(
+            onPressed: _isSending ? null : _retake,
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            label: Text(
+              _capturedPhoto != null ? 'Retake Photo' : 'Try Camera Again',
+              style: const TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF1A1A2E),
+              side: BorderSide(color: Colors.grey[400]!, width: 1.4),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildExplainerCard() {
     return Container(
       width: double.infinity,
@@ -901,7 +1066,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'What happens when you hold SOS',
+            'How SOS works',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
@@ -910,17 +1075,25 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 14),
           const _InfoStep(
-            icon: Icons.my_location,
-            color: Color(0xFF1565C0),
-            title: 'Your live GPS location is shared',
-            subtitle: 'Pinpoints exactly where you are.',
+            icon: Icons.warning_amber_rounded,
+            color: Color(0xFFD32F2F),
+            title: 'You pick the type of emergency',
+            subtitle: 'It guides the AI that reads your photo for responders.',
           ),
           const SizedBox(height: 12),
           const _InfoStep(
             icon: Icons.camera_alt_outlined,
             color: Color(0xFFF57C00),
-            title: 'A photo is captured automatically',
-            subtitle: 'Gives responders visual context on arrival.',
+            title: 'A photo is captured with one tap',
+            subtitle:
+                'You can review it and retake it before anything is sent.',
+          ),
+          const SizedBox(height: 12),
+          const _InfoStep(
+            icon: Icons.my_location,
+            color: Color(0xFF1565C0),
+            title: 'Your live GPS location is shared',
+            subtitle: 'Pinpoints exactly where you are once you confirm.',
           ),
           const SizedBox(height: 12),
           _InfoStep(

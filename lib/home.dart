@@ -26,6 +26,12 @@ class _HomeScreenState extends State<HomeScreen>
 
   String _citizenName = 'Citizen';
 
+  // Admin verification status of the logged-in resident ('pending',
+  // 'verified' or 'rejected'). Until an admin approves the account,
+  // manual reporting, Disaster Alerts and My Reports stay locked.
+  String _verificationStatus = 'pending';
+  bool get _isVerified => _verificationStatus == 'verified';
+
   @override
   void initState() {
     super.initState();
@@ -33,7 +39,10 @@ class _HomeScreenState extends State<HomeScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat();
-    if (!widget.isGuest) _loadCitizenName();
+    if (!widget.isGuest) {
+      _loadCitizenName();
+      _syncVerificationStatus();
+    }
   }
 
   String get _displayName => widget.isGuest ? 'Guest' : _citizenName;
@@ -42,9 +51,20 @@ class _HomeScreenState extends State<HomeScreen>
     final citizen = await ApiService.getUser();
     if (!mounted) return;
     final fullName = citizen?['full_name'];
-    if (fullName != null && fullName.toString().trim().isNotEmpty) {
-      setState(() => _citizenName = fullName.toString());
-    }
+    final status = citizen?['verification_status']?.toString();
+    setState(() {
+      if (fullName != null && fullName.toString().trim().isNotEmpty) {
+        _citizenName = fullName.toString();
+      }
+      if (status != null && status.isNotEmpty) _verificationStatus = status;
+    });
+  }
+
+  // The locally cached user can be stale (an admin may have approved the
+  // account since login), so re-fetch /me once and then re-read the cache.
+  Future<void> _syncVerificationStatus() async {
+    await ApiService.getMe();
+    await _loadCitizenName();
   }
 
   @override
@@ -66,10 +86,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _handleRefresh() async {
     if (widget.isGuest) return;
-    await Future.wait([
-      _alertsCardKey.currentState?.refresh() ?? Future.value(),
-      _loadCitizenName(),
-    ]);
+    await _syncVerificationStatus();
+    await _alertsCardKey.currentState?.refresh();
   }
 
   @override
@@ -85,6 +103,7 @@ class _HomeScreenState extends State<HomeScreen>
         alertsCardKey: _alertsCardKey,
         citizenName: _displayName,
         isGuest: widget.isGuest,
+        isVerified: _isVerified,
       ),
     );
   }
@@ -99,6 +118,7 @@ class _HomeTab extends StatelessWidget {
   final GlobalKey<_RecentAlertsCardState> alertsCardKey;
   final String citizenName;
   final bool isGuest;
+  final bool isVerified;
 
   const _HomeTab({
     required this.waveController,
@@ -107,6 +127,7 @@ class _HomeTab extends StatelessWidget {
     required this.alertsCardKey,
     required this.citizenName,
     required this.isGuest,
+    required this.isVerified,
   });
 
   @override
@@ -338,15 +359,23 @@ class _HomeTab extends StatelessWidget {
                     mainAxisSpacing: 12,
                     childAspectRatio: 1.0,
                     children: [
-                      // Report Emergency is now available to guests —
-                      // ReportIncidentScreen relaxes its own required
-                      // fields when isGuest is true.
+                      // Guests only get SOS, Safety Tips, Emergency
+                      // Hotlines and Evacuation Centers — everything
+                      // else (including Report Emergency) needs a login.
                       _ActionTile(
                         label: 'Report\nEmergency',
                         icon: Icons.warning_amber_rounded,
                         iconColor: const Color(0xFFD32F2F),
                         bgColor: const Color(0xFFFFEBEE),
                         onTap: () {
+                          if (isGuest) {
+                            _showLoginRequired(context);
+                            return;
+                          }
+                          if (!isVerified) {
+                            _showVerificationRequired(context);
+                            return;
+                          }
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -391,6 +420,10 @@ class _HomeTab extends StatelessWidget {
                             _showLoginRequired(context);
                             return;
                           }
+                          if (!isVerified) {
+                            _showVerificationRequired(context);
+                            return;
+                          }
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -407,6 +440,10 @@ class _HomeTab extends StatelessWidget {
                         onTap: () {
                           if (isGuest) {
                             _showLoginRequired(context);
+                            return;
+                          }
+                          if (!isVerified) {
+                            _showVerificationRequired(context);
                             return;
                           }
                           Navigator.push(
@@ -434,6 +471,8 @@ class _HomeTab extends StatelessWidget {
                   const SizedBox(height: 24),
                   if (isGuest)
                     const _GuestAlertsPrompt()
+                  else if (!isVerified)
+                    const _UnverifiedAlertsPrompt()
                   else
                     _RecentAlertsCard(key: alertsCardKey),
                 ],
@@ -515,6 +554,97 @@ void _showLoginRequired(BuildContext context) {
       ),
     ),
   );
+}
+
+// ── Verification-Required Prompt ────────────────────────────────────────────
+
+void _showVerificationRequired(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => Padding(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: const BoxDecoration(
+              color: Color(0xFFFEF3C7),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.hourglass_top_rounded,
+              color: Color(0xFF92400E),
+              size: 26,
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Account Not Verified Yet',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1A1A2E),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Your account is still waiting for MDRRMO verification. '
+            'Reporting, Disaster Alerts and My Reports will unlock once it '
+            'is approved. SOS, Safety Tips, Hotlines and Evacuation Centers '
+            'are available in the meantime.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13.5, color: Colors.grey[600]),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// ── Unverified Alerts Prompt ─────────────────────────────────────────────────
+
+class _UnverifiedAlertsPrompt extends StatelessWidget {
+  const _UnverifiedAlertsPrompt();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.hourglass_top_rounded, color: Colors.grey[400], size: 28),
+          const SizedBox(height: 10),
+          Text(
+            'Alerts unlock once MDRRMO verifies your account',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ── Guest Alerts Prompt ───────────────────────────────────────────────────────
