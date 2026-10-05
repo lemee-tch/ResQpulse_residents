@@ -348,13 +348,29 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     setState(() => _obscureNewPassword = !_obscureNewPassword),
               ),
             ),
+            // Mirrors the server's rule (Api\AuthController::resetPassword —
+            // Password::min(8)->mixedCase()->numbers()) so a citizen doesn't
+            // enter a code + 6-char password, tap Reset, and only then
+            // learn on the server's 422 that the password was too weak.
             validator: (v) {
               if (v == null || v.isEmpty) return 'Please enter a new password';
-              if (v.length < 6) return 'Password must be at least 6 characters';
+              if (v.length < 8) return 'Password must be at least 8 characters';
+              if (!RegExp(r'[A-Z]').hasMatch(v) ||
+                  !RegExp(r'[a-z]').hasMatch(v)) {
+                return 'Password must include upper and lower case letters';
+              }
+              if (!RegExp(r'[0-9]').hasMatch(v)) {
+                return 'Password must include at least one number';
+              }
               return null;
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 4),
+          Text(
+            'At least 8 characters, with upper & lower case letters and a number.',
+            style: TextStyle(fontSize: 11.5, color: Colors.grey[500]),
+          ),
+          const SizedBox(height: 12),
 
           _buildLabel('Confirm New Password'),
           const SizedBox(height: 6),
