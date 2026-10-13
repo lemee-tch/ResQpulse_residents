@@ -45,6 +45,35 @@ class ApiService {
     return token != null && token.isNotEmpty;
   }
 
+  // ── Guest details ─────────────────────────────────────────────────
+  // Guests must give their first name, last name and mobile number before
+  // an SOS (the server rejects a guest SOS without them). Kept on this
+  // phone so a guest only types them once — logging in or out doesn't
+  // clear them.
+
+  /// {'first_name', 'last_name', 'mobile'} as last saved ('' for any that
+  /// is missing), or null if nothing was saved yet.
+  static Future<Map<String, String>?> getGuestDetails() async {
+    final prefs = await SharedPreferences.getInstance();
+    final first = prefs.getString('guest_first_name') ?? '';
+    final last = prefs.getString('guest_last_name') ?? '';
+    final mobile = prefs.getString('guest_mobile') ?? '';
+    if (first.isEmpty && last.isEmpty && mobile.isEmpty) return null;
+    return {'first_name': first, 'last_name': last, 'mobile': mobile};
+  }
+
+  static Future<void> saveGuestDetails({
+    required String firstName,
+    required String lastName,
+    required String mobile,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('guest_first_name', firstName);
+    await prefs.setString('guest_last_name', lastName);
+    await prefs.setString('guest_mobile', mobile);
+    await prefs.remove('guest_name'); // saved by an earlier version
+  }
+
   /// Called whenever the server says a session is no longer valid
   /// (401 on an authenticated endpoint) — most commonly because an
   /// admin rejected/removed the account, revoking its tokens. Clears
@@ -125,6 +154,14 @@ class ApiService {
     required String email,
     required String password,
     File? validId,
+    // Where the 6-digit code is sent: 'email' or 'sms' (mobile number).
+    String verifyVia = 'email',
+    // The email and password the last "Send Code" used. Sent when the
+    // resident changes their details after the code was sent, so the
+    // server replaces that unfinished sign-up instead of saying the email
+    // or mobile number is already taken.
+    String? previousEmail,
+    String? previousPassword,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/register');
@@ -146,6 +183,13 @@ class ApiService {
       request.fields['zone'] = zone;
       request.fields['email'] = email;
       request.fields['password'] = password;
+      request.fields['verify_via'] = verifyVia;
+      if (previousEmail != null && previousEmail.isNotEmpty) {
+        request.fields['previous_email'] = previousEmail;
+      }
+      if (previousPassword != null && previousPassword.isNotEmpty) {
+        request.fields['previous_password'] = previousPassword;
+      }
 
       if (validId != null) {
         request.files.add(
@@ -225,13 +269,18 @@ class ApiService {
 
   static Future<ApiResponse> resendVerificationOtp({
     required String email,
+    // 'email' or 'sms' — lets the resident switch where the new code goes.
+    String? verifyVia,
   }) async {
     try {
       final response = await http
           .post(
             Uri.parse('$baseUrl/resend-verification-otp'),
             headers: _baseHeaders,
-            body: jsonEncode({'email': email}),
+            body: jsonEncode({
+              'email': email,
+              if (verifyVia != null) 'verify_via': verifyVia,
+            }),
           )
           .timeout(const Duration(seconds: 15));
 
@@ -241,6 +290,25 @@ class ApiService {
       return ApiResponse.error(data['message'] ?? 'Could not resend code.');
     } catch (e) {
       return ApiResponse.error(_handleError(e));
+    }
+  }
+
+  /// Whether the server can send verification codes by SMS. The Create
+  /// Account screen disables the "Mobile Number" choice until this is true.
+  /// Never fails — any error just means "email only".
+  static Future<bool> isSmsVerificationAvailable() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/verification-options'),
+            headers: _baseHeaders,
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return false;
+      final data = jsonDecode(response.body);
+      return data is Map && data['sms'] == true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -486,11 +554,16 @@ class ApiService {
   /// Flood, Accident, etc., or their own text for "Other"). It's
   /// optional so the button still works if it's ever null (shouldn't
   /// happen from the current sos.dart, but keeps this call resilient).
+  ///
+  /// [guestName] / [guestMobile] are required by the server when there is
+  /// no login (guest mode) — see Api\IncidentController::sos().
   static Future<ApiResponse> sendSOS({
     required double latitude,
     required double longitude,
     File? photo,
     String? emergencyType,
+    String? guestName,
+    String? guestMobile,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/incidents/sos');
@@ -504,6 +577,12 @@ class ApiService {
       request.fields['longitude'] = longitude.toString();
       if (emergencyType != null && emergencyType.trim().isNotEmpty) {
         request.fields['emergency_type'] = emergencyType.trim();
+      }
+      if (guestName != null && guestName.trim().isNotEmpty) {
+        request.fields['guest_name'] = guestName.trim();
+      }
+      if (guestMobile != null && guestMobile.trim().isNotEmpty) {
+        request.fields['guest_mobile'] = guestMobile.trim();
       }
 
       if (photo != null) {

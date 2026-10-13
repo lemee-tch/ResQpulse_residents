@@ -54,6 +54,21 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     'Other',
   ];
 
+  // ── Guest details (guest mode only) ──
+  // Guests must give their first name, last name and mobile number before
+  // they can send an SOS, so MDRRMO can call them back to confirm it and
+  // pranks can be traced. The server rejects a guest SOS without them
+  // (Api\IncidentController::sos — it gets "First Last" as guest_name).
+  // Asked in the "Your details" pop-up (_GuestDetailsDialog) and saved on
+  // the phone, so a guest only types them once.
+  String _guestFirstName = '';
+  String _guestLastName = '';
+  String _guestMobile = '';
+  bool _askingGuestDetails = false; // the pop-up is open
+
+  /// "First Last" — what's sent as guest_name and shown on screen.
+  String get _guestName => _tidyName('$_guestFirstName $_guestLastName');
+
   // ── Camera state ──
   CameraController? _cameraController;
   bool _cameraReady = false;
@@ -95,6 +110,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
 
     _initCamera();
     _primeLocation();
+    if (widget.isGuest) _loadGuestDetails();
   }
 
   @override
@@ -105,6 +121,64 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     _cameraController?.dispose();
     _otherEmergencyController.dispose();
     super.dispose();
+  }
+
+  // ── Guest details ─────────────────────────────────────────────────
+
+  /// Uses the name and number this guest saved last time; the first time
+  /// (nothing saved yet) the "Your details" pop-up opens right away.
+  Future<void> _loadGuestDetails() async {
+    final saved = await ApiService.getGuestDetails();
+    if (!mounted) return;
+    if (saved != null) {
+      setState(() {
+        _guestFirstName = saved['first_name'] ?? '';
+        _guestLastName = saved['last_name'] ?? '';
+        _guestMobile = saved['mobile'] ?? '';
+      });
+    }
+    if (!_guestDetailsValid) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _askGuestDetails();
+      });
+    }
+  }
+
+  bool get _guestDetailsValid =>
+      !widget.isGuest ||
+      (_namePartProblem(_guestFirstName, 'first') == null &&
+          _namePartProblem(_guestLastName, 'last') == null &&
+          _guestMobileProblem(_guestMobile) == null);
+
+  /// Opens the "Your details" pop-up. With [thenContinue] (the guest had
+  /// already picked the emergency type), the camera opens as soon as the
+  /// details are in.
+  Future<void> _askGuestDetails({bool thenContinue = false}) async {
+    if (_askingGuestDetails || !mounted) return;
+    _askingGuestDetails = true;
+    final Map<String, String>? result = await showDialog<Map<String, String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _GuestDetailsDialog(
+        initialFirstName: _guestFirstName,
+        initialLastName: _guestLastName,
+        initialMobile: _guestMobile,
+      ),
+    );
+    _askingGuestDetails = false;
+    if (!mounted || result == null) return; // Cancel
+
+    setState(() {
+      _guestFirstName = result['first_name'] ?? '';
+      _guestLastName = result['last_name'] ?? '';
+      _guestMobile = result['mobile'] ?? '';
+    });
+    ApiService.saveGuestDetails(
+      firstName: _guestFirstName,
+      lastName: _guestLastName,
+      mobile: _guestMobile,
+    );
+    if (thenContinue) _confirmType();
   }
 
   // ── Camera lifecycle ──────────────────────────────────────────────
@@ -256,34 +330,49 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
 
       // ApiService.sendSOS() only attaches an Authorization header when a
       // token exists, so this call works identically for guests and
-      // logged-in citizens — the backend decides needs_review from that.
+      // logged-in citizens. Either way the SOS waits for MDRRMO to
+      // verify it before responders are notified.
       final result = await ApiService.sendSOS(
         latitude: position.latitude,
         longitude: position.longitude,
         photo: _capturedPhoto,
         emergencyType: _resolvedEmergencyType,
+        guestName: widget.isGuest ? _guestName : null,
+        guestMobile: widget.isGuest ? _guestMobile : null,
       );
 
       if (!mounted) return;
 
       if (result.success) {
+        // The SOS button is hidden from now on, so stop its pulse and
+        // wave animations instead of letting them run in the background.
+        _pulseController.stop();
+        _waveController.stop();
         setState(() {
           _sosSent = true;
           _isSending = false;
           _awaitingConfirm = false;
-          _locationStatus = widget.isGuest
-              ? 'Location sent — awaiting MDRRMO review'
-              : 'Location sent to MDRRMO';
+          _locationStatus = 'Location sent — awaiting MDRRMO review';
         });
+        // Every SOS is verified by MDRRMO before responders are sent.
+        // Show the server's own wording (it differs for a pin outside
+        // Rosales). An older server only says "SOS sent.", so fall back
+        // to a message that explains the review.
+        final data = result.data;
+        final serverMessage = data is Map && data['message'] is String
+            ? (data['message'] as String).trim()
+            : '';
+        final useServerMessage =
+            serverMessage.isNotEmpty && serverMessage != 'SOS sent.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              widget.isGuest
-                  ? '🆘 SOS sent — MDRRMO will review it shortly.'
-                  : '🚨 SOS Alert sent — help is on the way.',
+              useServerMessage
+                  ? '🆘 $serverMessage'
+                  : '🆘 SOS sent. MDRRMO will verify it right away and then send responders.',
             ),
             backgroundColor: const Color(0xFF2E7D32),
-            duration: const Duration(seconds: 4),
+            duration: const Duration(seconds: 5),
           ),
         );
       } else {
@@ -355,8 +444,8 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
       return widget.isGuest
           ? 'MDRRMO has received your location and will review it shortly.'
           : (_capturedPhoto != null
-                ? 'MDRRMO has received your live location and photo.'
-                : 'MDRRMO has received your live location.');
+                ? 'MDRRMO has received your live location and photo and will review it shortly.'
+                : 'MDRRMO has received your live location and will review it shortly.');
     }
     if (_isSending) return 'Sharing your GPS location and photo.';
     if (_isCapturing) return 'Hold your phone steady.';
@@ -422,7 +511,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Guest mode: your location (and photo, if captured) is sent. MDRRMO reviews guest SOS alerts before dispatching responders.',
+                          'Guest mode: your name, number, location and photo are sent. MDRRMO reviews every SOS and may call you to confirm before sending responders.',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey[700],
@@ -567,23 +656,27 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                   ],
                 ),
 
-                const SizedBox(height: 28),
-
                 // ── SOS button (tap to capture) OR confirm / retake ──
-                if (_awaitingConfirm && !_sosSent)
-                  _buildConfirmPanel()
-                else ...[
-                  _buildSosButton(),
-                  const SizedBox(height: 10),
-                  if (!_sosSent && !_isCapturing)
-                    Text(
-                      'Tap once to capture a photo',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[500],
+                // Nothing here once the SOS is sent — no big check circle
+                // (panel revision #21). The "Alert Sent" headline, the
+                // location pill and the card below already confirm it.
+                if (!_sosSent) ...[
+                  const SizedBox(height: 28),
+                  if (_awaitingConfirm)
+                    _buildConfirmPanel()
+                  else ...[
+                    _buildSosButton(),
+                    const SizedBox(height: 10),
+                    if (!_isCapturing)
+                      Text(
+                        'Tap once to capture a photo',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[500],
+                        ),
                       ),
-                    ),
+                  ],
                 ],
               ] else
                 _buildTypePicker(),
@@ -677,13 +770,19 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
 
   // ── STEP 1: pick the type of emergency (camera stays hidden) ──────
 
-  bool get _canContinueFromType =>
+  bool get _typeChosen =>
       _selectedEmergency != null &&
       (_selectedEmergency != 'Other' ||
           _otherEmergencyController.text.trim().isNotEmpty);
 
   void _confirmType() {
-    if (!_canContinueFromType) return;
+    // Guests can't go on to the camera without their name and number —
+    // ask for them, then carry on.
+    if (!_guestDetailsValid) {
+      _askGuestDetails(thenContinue: true);
+      return;
+    }
+    if (!_typeChosen) return;
     FocusScope.of(context).unfocus();
     HapticFeedback.selectionClick();
     setState(() => _typeConfirmed = true);
@@ -706,6 +805,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (widget.isGuest) _buildGuestBar(),
         const Text(
           'What type of emergency is it?',
           textAlign: TextAlign.center,
@@ -805,7 +905,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
             width: double.infinity,
             height: 54,
             child: ElevatedButton.icon(
-              onPressed: _canContinueFromType ? _confirmType : null,
+              onPressed: _typeChosen ? _confirmType : null,
               icon: const Icon(Icons.camera_alt_rounded, size: 20),
               label: const Text(
                 'Continue to Camera',
@@ -832,7 +932,79 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     );
   }
 
+  /// Guests: the name and number the SOS will be sent with, and Edit —
+  /// or, if the pop-up was closed without them, a red reminder with Add.
+  Widget _buildGuestBar() {
+    final bool ready = _guestDetailsValid;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: ready ? Colors.white : const Color(0xFFFFEBEE),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: ready ? Colors.grey[300]! : const Color(0xFFD32F2F),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.badge_outlined,
+            size: 20,
+            color: ready ? const Color(0xFF6B7280) : const Color(0xFFD32F2F),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ready
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Your details',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                      Text(
+                        '$_guestName · $_guestMobile',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1A1A2E),
+                        ),
+                      ),
+                    ],
+                  )
+                : const Text(
+                    'Add your name and mobile number to send an SOS.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFD32F2F),
+                    ),
+                  ),
+          ),
+          TextButton(
+            onPressed: () => _askGuestDetails(),
+            child: Text(
+              ready ? 'Edit' : 'Add',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Compact "Emergency type: Fire — Change" bar shown above the camera.
+  /// For guests it also shows the name and number being sent; "Change"
+  /// goes back to edit both.
   Widget _buildTypeSummary() {
     final locked = _isSending || _isCapturing;
     return Container(
@@ -853,15 +1025,28 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              _resolvedEmergencyType ?? 'Emergency',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF1A1A2E),
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _resolvedEmergencyType ?? 'Emergency',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF1A1A2E),
+                  ),
+                ),
+                if (widget.isGuest)
+                  Text(
+                    '$_guestName · $_guestMobile',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+              ],
             ),
           ),
           TextButton(
@@ -919,9 +1104,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                           strokeWidth: 5,
                           backgroundColor: Colors.transparent,
                           valueColor: AlwaysStoppedAnimation(
-                            _sosSent
-                                ? const Color(0xFF2E7D32)
-                                : Colors.grey.withOpacity(0.15),
+                            Colors.grey.withOpacity(0.15),
                           ),
                         ),
                 ),
@@ -932,41 +1115,29 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
                     height: 122,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: LinearGradient(
+                      gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: _sosSent
-                            ? [const Color(0xFF2E7D32), const Color(0xFF43A047)]
-                            : [
-                                const Color(0xFFD32F2F),
-                                const Color(0xFFB71C1C),
-                              ],
+                        colors: [Color(0xFFD32F2F), Color(0xFFB71C1C)],
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: (_sosSent ? Colors.green : Colors.red)
-                              .withOpacity(0.4),
+                          color: Colors.red.withOpacity(0.4),
                           blurRadius: 22,
                           spreadRadius: 3,
                         ),
                       ],
                     ),
-                    child: Center(
-                      child: _sosSent
-                          ? const Icon(
-                              Icons.check_circle,
-                              color: Colors.white,
-                              size: 42,
-                            )
-                          : const Text(
-                              'SOS',
-                              style: TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                                letterSpacing: 2,
-                              ),
-                            ),
+                    child: const Center(
+                      child: Text(
+                        'SOS',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 2,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1074,6 +1245,15 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
             ),
           ),
           const SizedBox(height: 14),
+          if (widget.isGuest) ...[
+            const _InfoStep(
+              icon: Icons.badge_outlined,
+              color: Color(0xFF6A1B9A),
+              title: 'Guests enter their name and number',
+              subtitle: 'So MDRRMO can call you back. Saved on this phone.',
+            ),
+            const SizedBox(height: 12),
+          ],
           const _InfoStep(
             icon: Icons.warning_amber_rounded,
             color: Color(0xFFD32F2F),
@@ -1096,13 +1276,12 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
             subtitle: 'Pinpoints exactly where you are once you confirm.',
           ),
           const SizedBox(height: 12),
-          _InfoStep(
+          const _InfoStep(
             icon: Icons.shield_outlined,
-            color: const Color(0xFF2E7D32),
+            color: Color(0xFF2E7D32),
             title: 'MDRRMO is alerted',
-            subtitle: widget.isGuest
-                ? 'As a guest, MDRRMO reviews your alert before it\'s dispatched to responders.'
-                : 'Logged as a critical-priority incident for immediate dispatch.',
+            subtitle:
+                'MDRRMO verifies every SOS first, then sends responders right away.',
           ),
         ],
       ),
@@ -1151,12 +1330,9 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 8),
           Text(
-            widget.isGuest
-                ? 'MDRRMO will review your alert shortly before dispatching responders. '
-                      'If your situation changes, you can call the hotline directly below.'
-                : 'Responders have your location and photo, and are being dispatched now. '
-                      'If your situation changes or you need to move, keep the app open so we '
-                      'can track updates.',
+            'MDRRMO is verifying your alert and will send responders as soon as it\'s confirmed. '
+            'Keep your phone nearby in case they call you. '
+            'If your situation changes, call the hotline directly below.',
             style: TextStyle(
               fontSize: 12.5,
               color: Colors.grey[700],
@@ -1244,9 +1420,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           height: size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color:
-                (_sosSent ? const Color(0xFF2E7D32) : const Color(0xFFD32F2F))
-                    .withOpacity(opacity),
+            color: const Color(0xFFD32F2F).withOpacity(opacity),
           ),
         );
       },
@@ -1309,6 +1483,327 @@ class _InfoStep extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Guest details: rules + the "Your details" pop-up ─────────────────────
+
+/// The name with extra spaces removed.
+String _tidyName(String name) => name.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+// Each returns what's wrong, or null when it's fine. Together they match
+// the server's rules (Api\IncidentController::prepareGuestDetails), which
+// gets the two names joined as "First Last".
+
+/// [which] is 'first' or 'last'. Letters only; spaces, dots, apostrophes
+/// and hyphens are fine (e.g. "Ma. Lourdes", "Dela Cruz", "O'Neil").
+String? _namePartProblem(String raw, String which) {
+  final String name = _tidyName(raw);
+  if (name.isEmpty) return 'Enter your $which name';
+  if (!RegExp(
+    r"^[\p{L}\p{M}][\p{L}\p{M}.'-]*( [\p{L}\p{M}][\p{L}\p{M}.'-]*)*$",
+    unicode: true,
+  ).hasMatch(name)) {
+    return 'Use letters only';
+  }
+  if (name.length < 2) return 'Enter your full $which name';
+  return null;
+}
+
+String? _guestMobileProblem(String raw) {
+  final String mobile = raw.trim();
+  if (mobile.isEmpty) return 'Enter your mobile number';
+  if (!RegExp(r'^09\d{9}$').hasMatch(mobile)) {
+    return 'Enter an 11-digit number, e.g. 09171234567';
+  }
+  return null;
+}
+
+/// Pop-up card asking a guest for their first name, last name and mobile
+/// number. Closes with {'first_name', 'last_name', 'mobile'} on Continue,
+/// or null on Cancel.
+class _GuestDetailsDialog extends StatefulWidget {
+  final String initialFirstName;
+  final String initialLastName;
+  final String initialMobile;
+
+  const _GuestDetailsDialog({
+    required this.initialFirstName,
+    required this.initialLastName,
+    required this.initialMobile,
+  });
+
+  @override
+  State<_GuestDetailsDialog> createState() => _GuestDetailsDialogState();
+}
+
+class _GuestDetailsDialogState extends State<_GuestDetailsDialog> {
+  late final TextEditingController _firstName = TextEditingController(
+    text: widget.initialFirstName,
+  );
+  late final TextEditingController _lastName = TextEditingController(
+    text: widget.initialLastName,
+  );
+  late final TextEditingController _mobile = TextEditingController(
+    text: widget.initialMobile,
+  );
+
+  // Problems are shown only after the first tap on Continue, then update
+  // as the guest types.
+  bool _submitted = false;
+
+  @override
+  void dispose() {
+    _firstName.dispose();
+    _lastName.dispose();
+    _mobile.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_namePartProblem(_firstName.text, 'first') != null ||
+        _namePartProblem(_lastName.text, 'last') != null ||
+        _guestMobileProblem(_mobile.text) != null) {
+      HapticFeedback.vibrate();
+      setState(() => _submitted = true);
+      return;
+    }
+    Navigator.of(context).pop(<String, String>{
+      'first_name': _tidyName(_firstName.text),
+      'last_name': _tidyName(_lastName.text),
+      'mobile': _mobile.text.trim(),
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFFEBEE),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.badge_outlined,
+                color: Color(0xFFD32F2F),
+                size: 24,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Your details',
+              style: TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1A1A2E),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Guests need to give their name and mobile number before '
+              'sending an SOS. MDRRMO may call this number to confirm it.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 18),
+            _label('First name'),
+            _field(
+              controller: _firstName,
+              hint: 'e.g. Juan',
+              icon: Icons.person_outline,
+              keyboardType: TextInputType.name,
+              capitalization: TextCapitalization.words,
+              action: TextInputAction.next,
+              autofocus: widget.initialFirstName.isEmpty,
+              error: _submitted
+                  ? _namePartProblem(_firstName.text, 'first')
+                  : null,
+            ),
+            const SizedBox(height: 12),
+            _label('Last name'),
+            _field(
+              controller: _lastName,
+              hint: 'e.g. Dela Cruz',
+              icon: Icons.person_outline,
+              keyboardType: TextInputType.name,
+              capitalization: TextCapitalization.words,
+              action: TextInputAction.next,
+              error: _submitted
+                  ? _namePartProblem(_lastName.text, 'last')
+                  : null,
+            ),
+            const SizedBox(height: 12),
+            _label('Mobile number'),
+            _field(
+              controller: _mobile,
+              hint: '09XXXXXXXXX',
+              icon: Icons.phone_outlined,
+              keyboardType: TextInputType.phone,
+              formatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(11),
+              ],
+              action: TextInputAction.done,
+              onSubmitted: (_) => _submit(),
+              error: _submitted ? _guestMobileProblem(_mobile.text) : null,
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.lock_outline, size: 14, color: Colors.grey[500]),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Saved on this phone, so you only type it once.',
+                    style: TextStyle(fontSize: 11.5, color: Colors.grey[500]),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF1A1A2E),
+                        side: BorderSide(color: Colors.grey[400]!, width: 1.4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: SizedBox(
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: _submit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFD32F2F),
+                        foregroundColor: Colors.white,
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Continue',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _label(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF444466),
+        ),
+      ),
+    );
+  }
+
+  Widget _field({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    required TextInputType keyboardType,
+    required TextInputAction action,
+    TextCapitalization capitalization = TextCapitalization.none,
+    List<TextInputFormatter>? formatters,
+    bool autofocus = false,
+    ValueChanged<String>? onSubmitted,
+    String? error,
+  }) {
+    final borderSide = BorderSide(color: Colors.grey[300]!, width: 1.5);
+    const errorSide = BorderSide(color: Color(0xFFD32F2F), width: 1.5);
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      textCapitalization: capitalization,
+      textInputAction: action,
+      inputFormatters: formatters,
+      autofocus: autofocus,
+      onSubmitted: onSubmitted,
+      onChanged: (_) {
+        if (_submitted) setState(() {});
+      },
+      style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A2E)),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
+        prefixIcon: Icon(icon, color: Colors.grey[500], size: 20),
+        errorText: error,
+        errorMaxLines: 2,
+        filled: true,
+        fillColor: const Color(0xFFF8F9FB),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: borderSide,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: borderSide,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFD32F2F), width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: errorSide,
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFD32F2F), width: 2),
+        ),
+      ),
     );
   }
 }

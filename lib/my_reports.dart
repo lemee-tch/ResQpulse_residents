@@ -183,7 +183,7 @@ class _ReportCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusStyle = _statusStyle(report.status);
+    final statusStyle = _statusStyle(report.displayStatus);
     final teamSummary = _teamSummary;
 
     return GestureDetector(
@@ -336,9 +336,23 @@ class ReportStatusScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
-    final currentIndex = _currentIndex;
+    final bool declined = report.declined;
+    final int currentIndex = declined ? -1 : _currentIndex;
     final bool isResolved = report.status == 'resolved';
-    final Color activeColor = isResolved ? _green : _amber;
+    final Color activeColor = declined ? _grey : (isResolved ? _green : _amber);
+
+    // The first step says whether MDRRMO is still reviewing the report or
+    // has already sent it to responders.
+    final List<_StatusStep> steps = [
+      _StatusStep(
+        key: 'pending',
+        title: report.needsReview ? 'Under Review' : 'Pending',
+        subtitle: report.needsReview
+            ? 'MDRRMO is checking your report. Responders are sent once it\'s approved.'
+            : 'Sent to responders — waiting for one to accept',
+      ),
+      ..._steps.skip(1),
+    ];
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -368,6 +382,39 @@ class ReportStatusScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (declined) ...[
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 18),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFCA5A5)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.block, color: Color(0xFF991B1B), size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        (report.declineReason ?? '').trim().isNotEmpty
+                            ? 'MDRRMO declined this report: ${report.declineReason!.trim()}'
+                            : 'MDRRMO declined this report.',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF991B1B),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             // "Your Report" node — always filled navy, connects down with
             // navy/amber (something is already in motion) toward Pending.
             _TimelineRow(
@@ -382,11 +429,11 @@ class ReportStatusScreen extends StatelessWidget {
               ],
             ),
 
-            ..._steps.asMap().entries.map((entry) {
+            ...steps.asMap().entries.map((entry) {
               final i = entry.key;
               final step = entry.value;
               final bool reached = i <= currentIndex;
-              final bool isLast = i == _steps.length - 1;
+              final bool isLast = i == steps.length - 1;
 
               final Color circleColor = reached ? activeColor : _grey;
               final Color lineColor = (!isLast && i < currentIndex)
@@ -703,6 +750,12 @@ class _ReportData {
   final DateTime? createdAt;
   final List<Map<String, dynamic>> responders;
 
+  // Every report waits for MDRRMO to review it before responders are sent
+  // (needs_review). An admin can also decline it, with a reason.
+  final bool needsReview;
+  final bool declined;
+  final String? declineReason;
+
   const _ReportData({
     required this.id,
     required this.emergencyType,
@@ -711,7 +764,18 @@ class _ReportData {
     required this.status,
     required this.createdAt,
     required this.responders,
+    this.needsReview = false,
+    this.declined = false,
+    this.declineReason,
   });
+
+  /// What the badge shows: 'review', 'declined', or the server status
+  /// ('pending', 'responding', 'resolved').
+  String get displayStatus {
+    if (declined) return 'declined';
+    if (needsReview) return 'review';
+    return status;
+  }
 
   factory _ReportData.fromJson(Map<String, dynamic> json) {
     return _ReportData(
@@ -735,6 +799,12 @@ class _ReportData {
                 .map((r) => Map<String, dynamic>.from(r))
                 .toList()
           : <Map<String, dynamic>>[],
+      needsReview:
+          json['needs_review'] == true ||
+          json['needs_review'] == 1 ||
+          json['needs_review']?.toString() == '1',
+      declined: (json['declined_at']?.toString() ?? '').isNotEmpty,
+      declineReason: json['decline_reason']?.toString(),
     );
   }
 
@@ -773,6 +843,18 @@ class _StatusStyle {
 
 _StatusStyle _statusStyle(String status) {
   switch (status) {
+    case 'review':
+      return const _StatusStyle(
+        bg: Color(0xFFEDE9FE),
+        fg: Color(0xFF5B21B6),
+        label: 'Under Review',
+      );
+    case 'declined':
+      return const _StatusStyle(
+        bg: Color(0xFFFEE2E2),
+        fg: Color(0xFF991B1B),
+        label: 'Declined',
+      );
     case 'responding':
       return const _StatusStyle(
         bg: Color(0xFFE0F2FE),

@@ -507,14 +507,17 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
     setState(() => _isLoading = false);
 
     if (result.success) {
+      // Every report is reviewed by MDRRMO before responders are sent —
+      // the server's message says so (Api\IncidentController::store).
+      final data = result.data;
+      final String message = (data is Map && data['message'] is String)
+          ? data['message'] as String
+          : 'Report submitted. MDRRMO will review it and then send responders.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            widget.isGuest
-                ? 'Report submitted. MDRRMO will review it shortly.'
-                : 'Report submitted.',
-          ),
+          content: Text(message),
           backgroundColor: const Color(0xFF2E7D32),
+          duration: const Duration(seconds: 5),
         ),
       );
       Navigator.pop(context);
