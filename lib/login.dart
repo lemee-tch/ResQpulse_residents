@@ -16,6 +16,8 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+  // Email OR mobile number — residents who signed up with a mobile number
+  // have no email and log in with the number.
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
@@ -34,7 +36,7 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     final result = await ApiService.login(
-      email: _emailController.text.trim(),
+      login: _emailController.text.trim(),
       password: _passwordController.text,
     );
 
@@ -51,15 +53,25 @@ class _LoginScreenState extends State<LoginScreen> {
     } else {
       if (!mounted) return;
 
-      final needsVerificationEmail = (result.data is Map)
-          ? result.data['email'] as String?
-          : null;
+      // Sign-up not finished: open the code screen for the email — or for
+      // the mobile number, on an account that logs in with its number.
+      final Map? pending = result.data is Map ? result.data as Map : null;
+      final String? pendingEmail = pending?['email']?.toString();
+      final String? pendingMobile = pending?['mobile']?.toString();
+      final bool bySms = pending?['verify_via'] == 'sms';
 
-      if (needsVerificationEmail != null) {
+      if (bySms && pendingMobile != null && pendingMobile.isNotEmpty) {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => VerifyEmailScreen(email: needsVerificationEmail),
+            builder: (_) => VerifyEmailScreen(mobile: pendingMobile),
+          ),
+        );
+      } else if (pendingEmail != null && pendingEmail.isNotEmpty) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VerifyEmailScreen(email: pendingEmail),
           ),
         );
       }
@@ -165,18 +177,30 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 const SizedBox(height: 40),
 
-                // Email
+                // Email or mobile number
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: _inputDecoration('Email', Icons.email_outlined),
+                  decoration: _inputDecoration(
+                    'Email or Mobile Number',
+                    Icons.person_outline,
+                  ),
                   validator: (v) {
-                    if (v == null || v.isEmpty)
-                      return 'Please enter your email';
-                    if (!RegExp(
-                      r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
-                    ).hasMatch(v))
-                      return 'Please enter a valid email';
+                    final value = (v ?? '').trim();
+                    if (value.isEmpty) {
+                      return 'Please enter your email or mobile number';
+                    }
+                    if (value.contains('@')) {
+                      if (!RegExp(
+                        r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
+                      ).hasMatch(value)) {
+                        return 'Please enter a valid email';
+                      }
+                      return null;
+                    }
+                    if (!RegExp(r'^09\d{9}$').hasMatch(value)) {
+                      return 'Enter a valid email or 11-digit mobile number (09XXXXXXXXX)';
+                    }
                     return null;
                   },
                 ),

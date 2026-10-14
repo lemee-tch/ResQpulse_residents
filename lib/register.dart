@@ -22,6 +22,12 @@ import 'home.dart';
 ///                                  Number, then the contact details,
 ///                                  password, and the 6-digit code.
 ///
+/// The choice decides how the resident logs in:
+///   Email          email + mobile number (so MDRRMO can call during an
+///                  emergency). Logs in with the email; the code is emailed.
+///   Mobile Number  mobile number only — no email. Logs in with the number;
+///                  the code is texted.
+///
 /// Nothing is sent to the server until "Send Code" on step 3 — that single
 /// call creates the account and sends the code (POST /api/register, with
 /// `verify_via` = email | sms).
@@ -287,7 +293,8 @@ class _RegisterScreenState extends State<RegisterScreen>
     _selectedZone ?? '',
     _uploadedFile?.path ?? '',
     _mobileController.text.trim(),
-    _emailController.text.trim(),
+    // A mobile-number account has no email.
+    _verifyVia == 'sms' ? '' : _emailController.text.trim(),
     _passwordController.text,
   ].join('\u0000');
 
@@ -603,12 +610,13 @@ class _RegisterScreenState extends State<RegisterScreen>
 
     // Taken before the request, so edits made while it's sending don't
     // count as "sent".
+    final String via = _verifyVia!;
     final bool correcting = _sentValues != null;
     final String values = _formValues();
-    final String email = _emailController.text.trim();
+    // A mobile-number account has no email — it logs in with the number.
+    final String email = via == 'sms' ? '' : _emailController.text.trim();
     final String mobile = _mobileController.text.trim();
     final String password = _passwordController.text;
-    final String via = _verifyVia!;
 
     setState(() {
       _isSendingCode = true;
@@ -625,11 +633,12 @@ class _RegisterScreenState extends State<RegisterScreen>
       barangay: _selectedBarangay ?? '',
       street: _selectedStreet ?? '',
       zone: _selectedZone ?? '',
-      email: email,
+      email: via == 'sms' ? null : email,
       password: password,
       validId: _uploadedFile,
       verifyVia: via,
       previousEmail: _sentEmail,
+      previousMobile: _sentMobile,
       previousPassword: _sentPassword,
     );
 
@@ -675,9 +684,9 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
   }
 
-  /// Sends a fresh code to where the last one went, or to [via] when
-  /// switching between email and mobile number. Returns whether it worked.
-  Future<bool> _handleResendCode({String? via}) async {
+  /// Sends a fresh code to where the last one went — the email, or the
+  /// mobile number for a mobile-number account. Returns whether it worked.
+  Future<bool> _handleResendCode() async {
     if (_resendCooldown > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -691,11 +700,13 @@ class _RegisterScreenState extends State<RegisterScreen>
       return false;
     }
 
-    final String target = via ?? _sentVia ?? 'email';
+    final String target = _sentVia ?? 'email';
+    final bool bySms = target == 'sms';
     setState(() => _isSendingCode = true);
 
     final result = await ApiService.resendVerificationOtp(
-      email: _sentEmail ?? _emailController.text.trim(),
+      email: bySms ? null : (_sentEmail ?? _emailController.text.trim()),
+      mobile: bySms ? (_sentMobile ?? _mobileController.text.trim()) : null,
       verifyVia: target,
     );
 
@@ -723,11 +734,6 @@ class _RegisterScreenState extends State<RegisterScreen>
     return result.success;
   }
 
-  /// "Send to my mobile number / email instead" after the code was sent.
-  Future<void> _switchChannelAndResend() async {
-    await _handleResendCode(via: _sentVia == 'sms' ? 'email' : 'sms');
-  }
-
   /// Final action — verifies the code, then logs straight into Home.
   ///
   /// Sanitizes the code before checking its length — some keyboards /
@@ -746,8 +752,10 @@ class _RegisterScreenState extends State<RegisterScreen>
       _errorMessage = null;
     });
 
+    final bool bySms = _sentVia == 'sms';
     final result = await ApiService.verifyEmail(
-      email: _sentEmail ?? _emailController.text.trim(),
+      email: bySms ? null : (_sentEmail ?? _emailController.text.trim()),
+      mobile: bySms ? (_sentMobile ?? _mobileController.text.trim()) : null,
       otp: code,
     );
 
@@ -1404,8 +1412,8 @@ class _RegisterScreenState extends State<RegisterScreen>
       _sectionHeader('Create Account'),
       const SizedBox(height: 10),
       Text(
-        'Choose how you want to verify your account. We\'ll send a 6-digit '
-        'code there.',
+        'Choose how you\'ll log in. We\'ll send a 6-digit code there to '
+        'verify your account.',
         style: TextStyle(fontSize: 13, color: Colors.grey[600], height: 1.45),
       ),
       const SizedBox(height: 16),
@@ -1424,7 +1432,7 @@ class _RegisterScreenState extends State<RegisterScreen>
         value: 'email',
         icon: Icons.email_outlined,
         label: 'Email',
-        note: 'Get the code in your email inbox',
+        note: 'Log in with your email. We\'ll email the code.',
         enabled: true,
       ),
       const SizedBox(height: 10),
@@ -1433,7 +1441,7 @@ class _RegisterScreenState extends State<RegisterScreen>
         icon: Icons.sms_outlined,
         label: 'Mobile Number',
         note: _smsAvailable
-            ? 'Get the code by text message'
+            ? 'Log in with your mobile number. No email needed.'
             : 'Not available yet — use Email for now',
         enabled: _smsAvailable,
       ),
@@ -1493,9 +1501,10 @@ class _RegisterScreenState extends State<RegisterScreen>
     ];
   }
 
-  /// The chosen contact comes first ("we'll send your code here"); the
-  /// other one is still needed — email to log in, mobile number so MDRRMO
-  /// can call the resident back (panel revision #16 moved it here).
+  /// Email: the email (log in + code) and the mobile number, so MDRRMO can
+  /// call the resident during an emergency (panel revision #16 moved it
+  /// here). Mobile Number: only the mobile number — it's how they log in
+  /// and where the code is texted; no email is asked.
   List<Widget> _buildContactFields() {
     final bool bySms = _verifyVia == 'sms';
 
@@ -1510,7 +1519,7 @@ class _RegisterScreenState extends State<RegisterScreen>
         keyboardType: TextInputType.phone,
         onChanged: _onAccountFieldChanged,
         helper: bySms
-            ? 'We\'ll text your 6-digit code to this number.'
+            ? 'You\'ll log in with this number. We\'ll text your 6-digit code here.'
             : 'So MDRRMO can call you during an emergency.',
         inputFormatters: [
           FilteringTextInputFormatter.digitsOnly,
@@ -1536,9 +1545,8 @@ class _RegisterScreenState extends State<RegisterScreen>
         icon: Icons.email_outlined,
         keyboardType: TextInputType.emailAddress,
         onChanged: _onAccountFieldChanged,
-        helper: bySms
-            ? 'You\'ll use your email to log in.'
-            : 'We\'ll send your 6-digit code here. You\'ll also use it to log in.',
+        helper:
+            'We\'ll send your 6-digit code here. You\'ll also use it to log in.',
         validator: (v) {
           if (v == null || v.trim().isEmpty) return 'Email is required';
           if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v.trim())) {
@@ -1549,8 +1557,9 @@ class _RegisterScreenState extends State<RegisterScreen>
       ),
     );
 
+    // A mobile-number account has no email.
     return bySms
-        ? [mobileField, const SizedBox(height: 14), emailField]
+        ? [mobileField]
         : [emailField, const SizedBox(height: 14), mobileField];
   }
 
@@ -1637,19 +1646,6 @@ class _RegisterScreenState extends State<RegisterScreen>
                     ),
                   ),
           ),
-          if (_smsAvailable && _resendCooldown == 0 && !_isSendingCode)
-            TextButton(
-              onPressed: _switchChannelAndResend,
-              child: Text(
-                bySms
-                    ? 'Send to my email instead'
-                    : 'Send to my mobile number instead',
-                style: const TextStyle(
-                  color: Color(0xFF1A3A8F),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
         ],
       ),
       const SizedBox(height: 18),

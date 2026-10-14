@@ -107,8 +107,10 @@ class ApiService {
 
   // ── AUTH ──────────────────────────────────────────────────────────
 
+  /// Logs in with the email OR the mobile number ([login]) — residents who
+  /// signed up with a mobile number have no email.
   static Future<ApiResponse> login({
-    required String email,
+    required String login,
     required String password,
   }) async {
     try {
@@ -116,7 +118,12 @@ class ApiService {
           .post(
             Uri.parse('$baseUrl/login'),
             headers: _baseHeaders,
-            body: jsonEncode({'email': email, 'password': password}),
+            body: jsonEncode({
+              'login': login,
+              // Older servers only read "email".
+              if (login.contains('@')) 'email': login,
+              'password': password,
+            }),
           )
           .timeout(const Duration(seconds: 15));
 
@@ -130,12 +137,19 @@ class ApiService {
 
       if (response.statusCode == 403 && data['needs_verification'] == true) {
         return ApiResponse.error(
-          data['message'] ?? 'Please verify your email first.',
-          data: {'email': data['email']},
+          data['message'] ?? 'Please verify your account first.',
+          data: {
+            'email': data['email'],
+            'mobile': data['mobile'],
+            // 'sms' for an account that logs in with its mobile number.
+            'verify_via': data['verify_via'] ?? 'email',
+          },
         );
       }
 
-      return ApiResponse.error(data['message'] ?? 'Invalid email or password.');
+      return ApiResponse.error(
+        data['message'] ?? 'Invalid email, mobile number or password.',
+      );
     } catch (e) {
       return ApiResponse.error(_handleError(e));
     }
@@ -151,16 +165,19 @@ class ApiService {
     required String barangay,
     required String street,
     required String zone,
-    required String email,
+    // Null for a mobile-number account (verifyVia 'sms'): it has no email
+    // and logs in with the mobile number.
+    String? email,
     required String password,
     File? validId,
     // Where the 6-digit code is sent: 'email' or 'sms' (mobile number).
     String verifyVia = 'email',
-    // The email and password the last "Send Code" used. Sent when the
-    // resident changes their details after the code was sent, so the
-    // server replaces that unfinished sign-up instead of saying the email
-    // or mobile number is already taken.
+    // The email / mobile number and password the last "Send Code" used.
+    // Sent when the resident changes their details after the code was
+    // sent, so the server replaces that unfinished sign-up instead of
+    // saying the email or mobile number is already taken.
     String? previousEmail,
+    String? previousMobile,
     String? previousPassword,
   }) async {
     try {
@@ -181,11 +198,16 @@ class ApiService {
       request.fields['barangay'] = barangay;
       request.fields['street'] = street;
       request.fields['zone'] = zone;
-      request.fields['email'] = email;
+      if (email != null && email.isNotEmpty) {
+        request.fields['email'] = email;
+      }
       request.fields['password'] = password;
       request.fields['verify_via'] = verifyVia;
       if (previousEmail != null && previousEmail.isNotEmpty) {
         request.fields['previous_email'] = previousEmail;
+      }
+      if (previousMobile != null && previousMobile.isNotEmpty) {
+        request.fields['previous_mobile'] = previousMobile;
       }
       if (previousPassword != null && previousPassword.isNotEmpty) {
         request.fields['previous_password'] = previousPassword;
@@ -220,20 +242,43 @@ class ApiService {
     }
   }
 
-  static Future<ApiResponse> forgotPassword({required String email}) async {
+  /// Sends a 6-digit password-reset code (POST /forgot-password).
+  ///
+  /// [via] 'email' (default) emails it to [email]. 'sms' texts it to
+  /// [mobile] — for accounts that log in with their mobile number
+  /// (Api\AuthController::forgotPassword); the server answers the same
+  /// whether or not the number has such an account. The code is then
+  /// entered with [resetPassword], with the same email or number.
+  static Future<ApiResponse> forgotPassword({
+    String? email,
+    String? mobile,
+    String via = 'email',
+  }) async {
     try {
       final response = await http
           .post(
             Uri.parse('$baseUrl/forgot-password'),
             headers: _baseHeaders,
-            body: jsonEncode({'email': email}),
+            body: jsonEncode({
+              if (via != 'sms') 'email': email ?? '',
+              if (via == 'sms') 'via': 'sms',
+              if (via == 'sms') 'mobile': mobile ?? '',
+            }),
           )
-          .timeout(const Duration(seconds: 15));
+          // Longer than a normal call: the server may be sending a text.
+          .timeout(const Duration(seconds: 20));
 
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200) {
         return ApiResponse.success(data);
+      }
+      if (data is Map &&
+          data['errors'] is Map &&
+          (data['errors'] as Map).isNotEmpty) {
+        final first = (data['errors'] as Map).values.first;
+        final msg = first is List && first.isNotEmpty ? first.first : first;
+        return ApiResponse.error(msg.toString());
       }
       return ApiResponse.error(data['message'] ?? 'Something went wrong.');
     } catch (e) {
@@ -241,8 +286,11 @@ class ApiService {
     }
   }
 
+  /// Checks the sign-up code. The account is named by its [email], or by
+  /// its [mobile] number for an account that has no email.
   static Future<ApiResponse> verifyEmail({
-    required String email,
+    String? email,
+    String? mobile,
     required String otp,
   }) async {
     try {
@@ -250,7 +298,12 @@ class ApiService {
           .post(
             Uri.parse('$baseUrl/verify-email'),
             headers: _baseHeaders,
-            body: jsonEncode({'email': email, 'otp': otp}),
+            body: jsonEncode({
+              if (email != null && email.isNotEmpty) 'email': email,
+              if ((email == null || email.isEmpty) && mobile != null)
+                'mobile': mobile,
+              'otp': otp,
+            }),
           )
           .timeout(const Duration(seconds: 15));
 
@@ -267,9 +320,12 @@ class ApiService {
     }
   }
 
+  /// Sends a new sign-up code — to the [email], or by text to the [mobile]
+  /// number for an account that has no email.
   static Future<ApiResponse> resendVerificationOtp({
-    required String email,
-    // 'email' or 'sms' — lets the resident switch where the new code goes.
+    String? email,
+    String? mobile,
+    // 'email' or 'sms' — where the new code goes (email accounts).
     String? verifyVia,
   }) async {
     try {
@@ -278,7 +334,9 @@ class ApiService {
             Uri.parse('$baseUrl/resend-verification-otp'),
             headers: _baseHeaders,
             body: jsonEncode({
-              'email': email,
+              if (email != null && email.isNotEmpty) 'email': email,
+              if ((email == null || email.isEmpty) && mobile != null)
+                'mobile': mobile,
               if (verifyVia != null) 'verify_via': verifyVia,
             }),
           )
@@ -312,8 +370,11 @@ class ApiService {
     }
   }
 
+  /// Sets the new password with the reset code. The account is named by
+  /// its [email], or by its [mobile] number when the code was texted.
   static Future<ApiResponse> resetPassword({
-    required String email,
+    String? email,
+    String? mobile,
     required String otp,
     required String password,
   }) async {
@@ -323,7 +384,9 @@ class ApiService {
             Uri.parse('$baseUrl/reset-password'),
             headers: _baseHeaders,
             body: jsonEncode({
-              'email': email,
+              if (email != null && email.isNotEmpty) 'email': email,
+              if ((email == null || email.isEmpty) && mobile != null)
+                'mobile': mobile,
               'otp': otp,
               'password': password,
             }),

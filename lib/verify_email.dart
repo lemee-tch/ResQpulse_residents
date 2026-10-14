@@ -3,9 +3,15 @@ import 'api_service.dart';
 import 'home.dart';
 import 'push_notification.dart';
 
+/// Enter the sign-up code — opened from Login when the account isn't
+/// verified yet. For an email account the code goes to [email]; for an
+/// account that logs in with its mobile number (no email), it is texted to
+/// [mobile].
 class VerifyEmailScreen extends StatefulWidget {
-  final String email;
-  const VerifyEmailScreen({super.key, required this.email});
+  final String? email;
+  final String? mobile;
+  const VerifyEmailScreen({super.key, this.email, this.mobile})
+    : assert(email != null || mobile != null);
 
   @override
   State<VerifyEmailScreen> createState() => _VerifyEmailScreenState();
@@ -17,6 +23,12 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   bool _isLoading = false;
   bool _isResending = false;
   String? _errorMessage;
+
+  /// An account that logs in with its mobile number: codes are texted.
+  bool get _bySms => (widget.email == null || widget.email!.isEmpty);
+
+  /// Where the code goes, for the messages on this screen.
+  String get _destination => (_bySms ? widget.mobile : widget.email) ?? '';
 
   @override
   void dispose() {
@@ -33,7 +45,8 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     });
 
     final result = await ApiService.verifyEmail(
-      email: widget.email,
+      email: _bySms ? null : widget.email,
+      mobile: _bySms ? widget.mobile : null,
       otp: _otpController.text.trim(),
     );
 
@@ -55,7 +68,10 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
 
   Future<void> _handleResend() async {
     setState(() => _isResending = true);
-    final result = await ApiService.resendVerificationOtp(email: widget.email);
+    final result = await ApiService.resendVerificationOtp(
+      email: _bySms ? null : widget.email,
+      mobile: _bySms ? widget.mobile : null,
+    );
     if (!mounted) return;
     setState(() => _isResending = false);
 
@@ -63,7 +79,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       SnackBar(
         content: Text(
           result.success
-              ? 'A new code was sent to ${widget.email}'
+              ? 'A new code was sent to $_destination'
               : (result.error ?? 'Could not resend code.'),
         ),
         backgroundColor: result.success ? const Color(0xFF1A3A8F) : Colors.red,
@@ -78,9 +94,9 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'Verify Your Email',
-          style: TextStyle(
+        title: Text(
+          _bySms ? 'Verify Your Number' : 'Verify Your Email',
+          style: const TextStyle(
             color: Color(0xFF1A1A2E),
             fontWeight: FontWeight.bold,
             fontSize: 18,
@@ -104,16 +120,18 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                     color: const Color(0xFF1A3A8F).withOpacity(0.08),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.mark_email_unread_outlined,
-                    color: Color(0xFF1A3A8F),
+                  child: Icon(
+                    _bySms
+                        ? Icons.sms_outlined
+                        : Icons.mark_email_unread_outlined,
+                    color: const Color(0xFF1A3A8F),
                     size: 36,
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Text(
-                  'Check your email',
-                  style: TextStyle(
+                Text(
+                  _bySms ? 'Check your text messages' : 'Check your email',
+                  style: const TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF1A1A2E),
@@ -121,7 +139,8 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'We sent a 6-digit code to ${widget.email}. Enter it below to activate your account.',
+                  'Enter the 6-digit code we sent to $_destination to activate '
+                  'your account. If it expired or never came, tap Resend.',
                   style: TextStyle(
                     fontSize: 14,
                     color: Colors.grey[600],

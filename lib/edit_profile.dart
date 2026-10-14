@@ -13,6 +13,10 @@ import 'api_service.dart';
 /// separate forgot/reset-password OTP flow (see login.dart /
 /// forgot_password.dart). Municipality stays fixed to Rosales, same as
 /// registration.
+///
+/// A resident who signed up with "Mobile Number" has no email and logs in
+/// with the number, so for them the mobile number is shown but can't be
+/// changed here either (the server refuses it too).
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> citizen;
 
@@ -30,6 +34,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _lastNameController;
   late final TextEditingController _suffixController;
   late final TextEditingController _mobileController;
+
+  /// Signed up with "Mobile Number": no email — logs in with the number.
+  bool get _logsInWithMobile =>
+      (widget.citizen['email'] ?? '').toString().trim().isEmpty;
 
   static const String _municipality = 'Rosales';
 
@@ -302,6 +310,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   hint: 'e.g. 09XXXXXXXXX',
                   icon: Icons.phone_outlined,
                   keyboardType: TextInputType.phone,
+                  readOnly: _logsInWithMobile,
+                  helper: _logsInWithMobile
+                      ? 'This is how you log in, so it can\'t be changed here.'
+                      : null,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(11),
@@ -457,6 +469,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     TextInputType keyboardType = TextInputType.text,
     List<TextInputFormatter>? inputFormatters,
     String? Function(String?)? validator,
+    bool readOnly = false,
+    String? helper,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -475,8 +489,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           keyboardType: keyboardType,
           inputFormatters: inputFormatters,
           validator: validator,
-          style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A2E)),
-          decoration: _inputDecoration(hint, icon),
+          readOnly: readOnly,
+          style: TextStyle(
+            fontSize: 15,
+            color: readOnly ? Colors.grey[600] : const Color(0xFF1A1A2E),
+          ),
+          decoration: _inputDecoration(hint, icon).copyWith(
+            helperText: helper,
+            helperMaxLines: 2,
+            fillColor: readOnly ? const Color(0xFFF5F6FA) : null,
+          ),
         ),
       ],
     );
