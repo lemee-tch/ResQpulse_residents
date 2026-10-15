@@ -446,12 +446,13 @@ class ApiService {
     }
   }
 
-  /// Edit Profile screen — updates name, mobile and address fields for
-  /// the logged-in citizen. Email and password are deliberately not
-  /// editable here (see AuthController::updateProfile's doc comment).
-  /// Saves the fresh citizen record locally on success so every screen
-  /// reading getUser() immediately reflects the change, no extra
-  /// getMe() round-trip needed.
+  /// Edit Profile screen — updates the name and address fields for the
+  /// logged-in citizen. The email and mobile number are changed with a
+  /// code instead (requestContactChange / confirmContactChange); pass the
+  /// current [mobile] here — older servers still require it. Saves the
+  /// fresh citizen record locally on success so every screen reading
+  /// getUser() immediately reflects the change, no extra getMe()
+  /// round-trip needed.
   static Future<ApiResponse> updateProfile({
     required String firstName,
     String? middleName,
@@ -498,6 +499,90 @@ class ApiService {
     } catch (e) {
       return ApiResponse.error(_handleError(e));
     }
+  }
+
+  // ── Change email / Change number (Personal Information) ───────────
+
+  /// Sends a 6-digit code to confirm a new email or mobile number ([type]
+  /// 'email' or 'mobile'). Nothing changes until the code is entered
+  /// (confirmContactChange). Sending the current number again verifies it.
+  ///
+  /// On success, data['sent_via'] ('email' or 'sms') and data['sent_to']
+  /// say where the code went: when texts can't be sent, the code for a new
+  /// number goes to the resident's email instead. A 429 carries
+  /// data['retry_after'] (seconds).
+  static Future<ApiResponse> requestContactChange({
+    required String type,
+    required String value,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/profile/contact'),
+            headers: headers,
+            body: jsonEncode({'type': type, 'value': value}),
+          )
+          // Sending an email or a text can take a few seconds.
+          .timeout(const Duration(seconds: 30));
+
+      return _contactReply(response, 'Could not send the code.');
+    } catch (e) {
+      return ApiResponse.error(_handleError(e));
+    }
+  }
+
+  /// Checks the code and saves the new email or number. Saves the updated
+  /// profile on this phone on success (data['citizen']).
+  static Future<ApiResponse> confirmContactChange({
+    required String type,
+    required String code,
+  }) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/profile/contact/verify'),
+            headers: headers,
+            body: jsonEncode({'type': type, 'code': code}),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final reply = await _contactReply(response, 'Could not check the code.');
+      if (reply.success && reply.data['citizen'] is Map) {
+        await saveUser(Map<String, dynamic>.from(reply.data['citizen']));
+      }
+      return reply;
+    } catch (e) {
+      return ApiResponse.error(_handleError(e));
+    }
+  }
+
+  static Future<ApiResponse> _contactReply(
+    http.Response response,
+    String fallback,
+  ) async {
+    // A server that doesn't have this yet answers 404 with a web page.
+    if (response.statusCode == 404) {
+      return ApiResponse.error(
+        'Changing your email or number isn\'t available yet. Please try again later.',
+        statusCode: 404,
+      );
+    }
+
+    Map<String, dynamic> data = {};
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) data = decoded;
+    } catch (_) {}
+
+    if (response.statusCode == 200) return ApiResponse.success(data);
+    if (response.statusCode == 401) await _forceGuestMode();
+    return ApiResponse.error(
+      data['message']?.toString() ?? fallback,
+      data: data,
+      statusCode: response.statusCode,
+    );
   }
 
   static Future<ApiResponse> getAlerts() async {

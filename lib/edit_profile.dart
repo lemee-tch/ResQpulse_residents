@@ -1,22 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'api_service.dart';
+import 'change_contact.dart';
 
-/// Edit Profile — lets a logged-in citizen update their name, mobile
-/// number and address. Deliberately mirrors register.dart's field
-/// layout/style (same barangay/street/zone lists, same input
-/// decoration) so the two forms feel like the same app, but pre-filled
-/// from the citizen's current record instead of starting blank.
+/// Profile → Personal Information.
 ///
-/// Email and password are NOT editable here — email is tied to login
-/// and verification_status, and password changes go through the
-/// separate forgot/reset-password OTP flow (see login.dart /
-/// forgot_password.dart). Municipality stays fixed to Rosales, same as
-/// registration.
+/// Contact: the email and mobile number, each marked Verified or Not
+/// verified, with Change (or Add email) and, for a number that isn't
+/// verified yet, Verify. Those open ChangeContactScreen, which confirms the
+/// new email or number with a 6-digit code sent to it — before, the number
+/// was changed here with no code (and not at all for residents who log in
+/// with it), and the email couldn't be changed.
 ///
-/// A resident who signed up with "Mobile Number" has no email and logs in
-/// with the number, so for them the mobile number is shown but can't be
-/// changed here either (the server refuses it too).
+/// Name and Address: edited here and saved with Save Changes. Same
+/// barangay/street/zone lists as register.dart. Municipality stays fixed
+/// to Rosales; password changes go through Forgot Password.
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> citizen;
 
@@ -27,26 +25,31 @@ class EditProfileScreen extends StatefulWidget {
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
+  static const Color _navy = Color(0xFF1A3A8F);
+  static const Color _ink = Color(0xFF1A1A2E);
+
   final _formKey = GlobalKey<FormState>();
+
+  /// The profile as it is now — updated when the email or number changes.
+  late Map<String, dynamic> _citizen;
 
   late final TextEditingController _firstNameController;
   late final TextEditingController _middleNameController;
   late final TextEditingController _lastNameController;
   late final TextEditingController _suffixController;
-  late final TextEditingController _mobileController;
-
-  /// Signed up with "Mobile Number": no email — logs in with the number.
-  bool get _logsInWithMobile =>
-      (widget.citizen['email'] ?? '').toString().trim().isEmpty;
-
-  static const String _municipality = 'Rosales';
 
   String? _selectedBarangay;
   String? _selectedStreet;
   String? _selectedZone;
 
+  /// What the form started with, to ask before leaving with unsaved edits.
+  late final List<String?> _initialValues;
+
   bool _isSaving = false;
   String? _errorMessage;
+
+  /// Whether texts can be sent right now (for Verify); null while checking.
+  bool? _smsAvailable;
 
   // Same Rosales-only lists as register.dart, kept in sync so a citizen
   // editing their profile sees the exact same options they registered
@@ -112,10 +115,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     'Zone V',
   ];
 
+  String get _email => (_citizen['email'] ?? '').toString().trim();
+  String get _mobile => (_citizen['mobile'] ?? '').toString().trim();
+  bool get _hasEmail => _email.isNotEmpty;
+  bool get _emailVerified => _citizen['email_verified_at'] != null;
+  bool get _mobileVerified => _citizen['mobile_verified_at'] != null;
+
   @override
   void initState() {
     super.initState();
-    final c = widget.citizen;
+    _citizen = Map<String, dynamic>.from(widget.citizen);
+    final c = _citizen;
     _firstNameController = TextEditingController(
       text: c['first_name']?.toString() ?? '',
     );
@@ -127,9 +137,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
     _suffixController = TextEditingController(
       text: c['suffix']?.toString() ?? '',
-    );
-    _mobileController = TextEditingController(
-      text: c['mobile']?.toString() ?? '',
     );
 
     // Dropdown values only take if they match a known option — an
@@ -147,6 +154,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (zone != null && _zones.contains(zone)) {
       _selectedZone = zone;
     }
+
+    _initialValues = _currentValues();
+    _checkSms();
   }
 
   @override
@@ -155,8 +165,89 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _middleNameController.dispose();
     _lastNameController.dispose();
     _suffixController.dispose();
-    _mobileController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkSms() async {
+    final available = await ApiService.isSmsVerificationAvailable();
+    if (mounted) setState(() => _smsAvailable = available);
+  }
+
+  List<String?> _currentValues() => [
+    _firstNameController.text.trim(),
+    _middleNameController.text.trim(),
+    _lastNameController.text.trim(),
+    _suffixController.text.trim(),
+    _selectedBarangay,
+    _selectedStreet,
+    _selectedZone,
+  ];
+
+  bool get _hasUnsavedEdits {
+    final now = _currentValues();
+    for (var i = 0; i < now.length; i++) {
+      if (now[i] != _initialValues[i]) return true;
+    }
+    return false;
+  }
+
+  /// Back with unsaved edits: ask first.
+  Future<void> _leave() async {
+    if (!_hasUnsavedEdits) {
+      Navigator.pop(context);
+      return;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Discard changes?',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Your changes to your name or address haven\'t been saved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep Editing'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) Navigator.pop(context);
+  }
+
+  /// Change / Add email, Change number, Verify number.
+  Future<void> _openChange(String type, {bool verifyCurrent = false}) async {
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChangeContactScreen(
+          type: type,
+          citizen: _citizen,
+          verifyCurrent: verifyCurrent,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    final updated = result['citizen'];
+    if (updated is Map) {
+      setState(() => _citizen = Map<String, dynamic>.from(updated));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result['message']?.toString() ?? 'Saved.'),
+        backgroundColor: const Color(0xFF2E7D32),
+      ),
+    );
   }
 
   Future<void> _handleSave() async {
@@ -172,7 +263,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       middleName: _middleNameController.text.trim(),
       lastName: _lastNameController.text.trim(),
       suffix: _suffixController.text.trim(),
-      mobile: _mobileController.text.trim(),
+      // Unchanged — the number is changed with a code (Contact above).
+      mobile: _mobile,
       barangay: _selectedBarangay ?? '',
       street: _selectedStreet,
       zone: _selectedZone,
@@ -185,7 +277,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Profile updated.'),
-          backgroundColor: Color(0xFF1A3A8F),
+          backgroundColor: Color(0xFF2E7D32),
         ),
       );
       // Hand the fresh citizen record back so ProfileScreen can update
@@ -198,51 +290,133 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back_ios_new,
-            color: Color(0xFF1A3A8F),
-            size: 20,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _leave();
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF5F6FA),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          systemOverlayStyle: SystemUiOverlayStyle.dark,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new, color: _ink, size: 20),
+            onPressed: _leave,
           ),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Personal Information',
-          style: TextStyle(
-            color: Color(0xFF1A1A2E),
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
+          title: const Text(
+            'Personal Information',
+            style: TextStyle(
+              color: _ink,
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+            ),
           ),
+          centerTitle: true,
         ),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        body: SafeArea(
           child: Form(
             key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
               children: [
+                _contactCard(),
+                const SizedBox(height: 16),
+                _section(
+                  title: 'Name',
+                  icon: Icons.badge_outlined,
+                  children: [
+                    _buildTextField(
+                      controller: _firstNameController,
+                      label: 'First Name',
+                      hint: 'Enter your first name',
+                      icon: Icons.person_outline,
+                      keyboardType: TextInputType.name,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'First name is required'
+                          : null,
+                    ),
+                    const SizedBox(height: 14),
+                    _buildTextField(
+                      controller: _middleNameController,
+                      label: 'Middle Name (optional)',
+                      hint: 'Enter your middle name',
+                      icon: Icons.person_outline,
+                      keyboardType: TextInputType.name,
+                    ),
+                    const SizedBox(height: 14),
+                    _buildTextField(
+                      controller: _lastNameController,
+                      label: 'Last Name',
+                      hint: 'Enter your last name',
+                      icon: Icons.person_outline,
+                      keyboardType: TextInputType.name,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'Last name is required'
+                          : null,
+                    ),
+                    const SizedBox(height: 14),
+                    _buildTextField(
+                      controller: _suffixController,
+                      label: 'Suffix (optional)',
+                      hint: 'e.g. Jr., Sr., III',
+                      icon: Icons.badge_outlined,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _section(
+                  title: 'Address',
+                  icon: Icons.home_outlined,
+                  children: [
+                    _municipalityTile(),
+                    const SizedBox(height: 14),
+                    _buildDropdown(
+                      label: 'Barangay',
+                      hint: 'Select your barangay',
+                      icon: Icons.home_work_outlined,
+                      value: _selectedBarangay,
+                      items: _barangays,
+                      onChanged: (v) => setState(() => _selectedBarangay = v),
+                      validator: (v) =>
+                          v == null ? 'Please select a barangay' : null,
+                    ),
+                    const SizedBox(height: 14),
+                    _buildDropdown(
+                      label: 'Street (optional)',
+                      hint: 'Select your street',
+                      icon: Icons.location_on_outlined,
+                      value: _selectedStreet,
+                      items: _streets,
+                      onChanged: (v) => setState(() => _selectedStreet = v),
+                    ),
+                    const SizedBox(height: 14),
+                    _buildDropdown(
+                      label: 'Zone (optional)',
+                      hint: 'Select your zone',
+                      icon: Icons.map_outlined,
+                      value: _selectedZone,
+                      items: _zones,
+                      onChanged: (v) => setState(() => _selectedZone = v),
+                    ),
+                  ],
+                ),
+
                 if (_errorMessage != null) ...[
+                  const SizedBox(height: 16),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: Colors.red[50],
+                      color: const Color(0xFFD32F2F),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red[200]!),
                     ),
                     child: Row(
                       children: [
                         const Icon(
                           Icons.error_outline,
-                          color: Colors.red,
+                          color: Colors.white,
                           size: 18,
                         ),
                         const SizedBox(width: 10),
@@ -250,173 +424,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: Text(
                             _errorMessage!,
                             style: const TextStyle(
-                              color: Colors.red,
+                              color: Colors.white,
                               fontSize: 13,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 16),
                 ],
-
-                _buildTextField(
-                  controller: _firstNameController,
-                  label: 'First Name',
-                  hint: 'Enter your first name',
-                  icon: Icons.person_outline,
-                  keyboardType: TextInputType.name,
-                  validator: (v) => (v == null || v.isEmpty)
-                      ? 'First name is required'
-                      : null,
-                ),
-                const SizedBox(height: 14),
-
-                _buildTextField(
-                  controller: _middleNameController,
-                  label: 'Middle Name (optional)',
-                  hint: 'Enter your middle name',
-                  icon: Icons.person_outline,
-                  keyboardType: TextInputType.name,
-                  validator: (v) => null,
-                ),
-                const SizedBox(height: 14),
-
-                _buildTextField(
-                  controller: _lastNameController,
-                  label: 'Last Name',
-                  hint: 'Enter your last name',
-                  icon: Icons.person_outline,
-                  keyboardType: TextInputType.name,
-                  validator: (v) =>
-                      (v == null || v.isEmpty) ? 'Last name is required' : null,
-                ),
-                const SizedBox(height: 14),
-
-                _buildTextField(
-                  controller: _suffixController,
-                  label: 'Suffix (optional)',
-                  hint: 'e.g. Jr., Sr., III',
-                  icon: Icons.badge_outlined,
-                  keyboardType: TextInputType.text,
-                  validator: (v) => null,
-                ),
-                const SizedBox(height: 14),
-
-                _buildTextField(
-                  controller: _mobileController,
-                  label: 'Mobile Number',
-                  hint: 'e.g. 09XXXXXXXXX',
-                  icon: Icons.phone_outlined,
-                  keyboardType: TextInputType.phone,
-                  readOnly: _logsInWithMobile,
-                  helper: _logsInWithMobile
-                      ? 'This is how you log in, so it can\'t be changed here.'
-                      : null,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(11),
-                  ],
-                  validator: (v) {
-                    if (v == null || v.isEmpty) {
-                      return 'Mobile number is required';
-                    }
-                    if (v.length < 10) return 'Enter a valid mobile number';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 14),
-
-                // Municipality — fixed, shown as read-only info tile
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Municipality',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF444466),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 15,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF0F4FF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: const Color(0xFF1A3A8F).withOpacity(0.3),
-                          width: 1.5,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.location_city_outlined,
-                            color: const Color(0xFF1A3A8F).withOpacity(0.6),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Rosales, Pangasinan',
-                            style: TextStyle(
-                              fontSize: 15,
-                              color: Color(0xFF1A3A8F),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const Spacer(),
-                          Icon(
-                            Icons.lock_outline,
-                            size: 16,
-                            color: const Color(0xFF1A3A8F).withOpacity(0.4),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                _buildDropdown(
-                  label: 'Barangay',
-                  hint: 'Select your barangay',
-                  icon: Icons.home_work_outlined,
-                  value: _selectedBarangay,
-                  items: _barangays,
-                  onChanged: (v) => setState(() => _selectedBarangay = v),
-                  validator: (v) =>
-                      v == null ? 'Please select a barangay' : null,
-                ),
-                const SizedBox(height: 14),
-
-                _buildDropdown(
-                  label: 'Street',
-                  hint: 'Select your street',
-                  icon: Icons.location_on_outlined,
-                  value: _selectedStreet,
-                  items: _streets,
-                  onChanged: (v) => setState(() => _selectedStreet = v),
-                  validator: (v) => null,
-                ),
-                const SizedBox(height: 14),
-
-                _buildDropdown(
-                  label: 'Zone',
-                  hint: 'Select your zone',
-                  icon: Icons.map_outlined,
-                  value: _selectedZone,
-                  items: _zones,
-                  onChanged: (v) => setState(() => _selectedZone = v),
-                  validator: (v) => null,
-                ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 20),
 
                 SizedBox(
                   width: double.infinity,
@@ -424,14 +442,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   child: ElevatedButton(
                     onPressed: _isSaving ? null : _handleSave,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1A3A8F),
+                      backgroundColor: _navy,
                       disabledBackgroundColor: Colors.grey[300],
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      elevation: 3,
-                      shadowColor: const Color(0xFF1A3A8F).withOpacity(0.4),
+                      elevation: 2,
                     ),
                     child: _isSaving
                         ? const SizedBox(
@@ -443,21 +460,308 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ),
                           )
                         : const Text(
-                            'SAVE CHANGES',
+                            'Save Changes',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              letterSpacing: 1.5,
+                              letterSpacing: 0.5,
                             ),
                           ),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 8),
+                Text(
+                  'Save Changes saves your name and address. Your email and '
+                  'number are saved as soon as you confirm the code.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  // ── Contact ─────────────────────────────────────────────────────────
+
+  Widget _contactCard() {
+    return _section(
+      title: 'Contact',
+      icon: Icons.contact_mail_outlined,
+      children: [
+        _contactRow(
+          icon: Icons.mail_outline,
+          label: 'Email',
+          value: _hasEmail ? _email : 'No email yet',
+          empty: !_hasEmail,
+          verified: _emailVerified,
+          actionLabel: _hasEmail ? 'Change' : 'Add',
+          onAction: () => _openChange('email'),
+        ),
+        Divider(height: 24, color: Colors.grey[200]),
+        _contactRow(
+          icon: Icons.phone_outlined,
+          label: 'Mobile number',
+          value: _mobile.isEmpty ? 'No number yet' : _mobile,
+          empty: _mobile.isEmpty,
+          verified: _mobileVerified,
+          actionLabel: 'Change',
+          onAction: () => _openChange('mobile'),
+          // Confirm the current number by text, when texts can be sent.
+          onVerify:
+              (!_mobileVerified && _mobile.isNotEmpty && _smsAvailable == true)
+              ? () => _openChange('mobile', verifyCurrent: true)
+              : null,
+        ),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: _navy.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.login, size: 16, color: _navy),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _hasEmail
+                      ? 'You can log in with your email or mobile number. A '
+                            'change is confirmed with a code sent to the new '
+                            'one.'
+                      : 'You log in with your mobile number. A change is '
+                            'confirmed with a code sent to the new one.',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: _navy,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _contactRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required bool empty,
+    required bool verified,
+    required String actionLabel,
+    required VoidCallback onAction,
+    VoidCallback? onVerify,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: _navy.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: _navy, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: empty ? FontWeight.w500 : FontWeight.w700,
+                  color: empty ? Colors.grey[500] : _ink,
+                ),
+              ),
+              if (!empty) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _statusChip(verified),
+                    if (onVerify != null)
+                      GestureDetector(
+                        onTap: onVerify,
+                        child: const Text(
+                          'Verify now',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: _navy,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        OutlinedButton(
+          onPressed: onAction,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _navy,
+            side: const BorderSide(color: Color(0xFFC7D2FE), width: 1.4),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            minimumSize: const Size(0, 36),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          child: Text(
+            actionLabel,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statusChip(bool verified) {
+    final Color bg = verified
+        ? const Color(0xFFD1FAE5)
+        : const Color(0xFFFEF3C7);
+    final Color fg = verified
+        ? const Color(0xFF065F46)
+        : const Color(0xFF92400E);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            verified ? Icons.verified : Icons.error_outline,
+            size: 13,
+            color: fg,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            verified ? 'Verified' : 'Not verified',
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: fg,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Layout pieces ───────────────────────────────────────────────────
+
+  Widget _section({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: Colors.grey[500]),
+              const SizedBox(width: 8),
+              Text(
+                title.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _municipalityTile() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Municipality',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF444466),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0F4FF),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _navy.withOpacity(0.2), width: 1.5),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.location_city_outlined,
+                color: _navy.withOpacity(0.6),
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Rosales, Pangasinan',
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: _navy,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Icon(Icons.lock_outline, size: 16, color: _navy.withOpacity(0.4)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -467,10 +771,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     required String hint,
     required IconData icon,
     TextInputType keyboardType = TextInputType.text,
-    List<TextInputFormatter>? inputFormatters,
     String? Function(String?)? validator,
-    bool readOnly = false,
-    String? helper,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -487,18 +788,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         TextFormField(
           controller: controller,
           keyboardType: keyboardType,
-          inputFormatters: inputFormatters,
+          textCapitalization: TextCapitalization.words,
           validator: validator,
-          readOnly: readOnly,
-          style: TextStyle(
-            fontSize: 15,
-            color: readOnly ? Colors.grey[600] : const Color(0xFF1A1A2E),
-          ),
-          decoration: _inputDecoration(hint, icon).copyWith(
-            helperText: helper,
-            helperMaxLines: 2,
-            fillColor: readOnly ? const Color(0xFFF5F6FA) : null,
-          ),
+          style: const TextStyle(fontSize: 15, color: _ink),
+          decoration: _inputDecoration(hint, icon),
         ),
       ],
     );
@@ -511,7 +804,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     required String? value,
     required List<String> items,
     required void Function(String?) onChanged,
-    required String? Function(String?)? validator,
+    String? Function(String?)? validator,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -530,11 +823,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           onChanged: onChanged,
           validator: validator,
           isExpanded: true,
-          icon: const Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: Color(0xFF1A1A2E),
-          ),
-          style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A2E)),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _ink),
+          style: const TextStyle(fontSize: 15, color: _ink),
           decoration: _inputDecoration(hint, icon),
           items: items
               .map((item) => DropdownMenuItem(value: item, child: Text(item)))
@@ -562,7 +852,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF1A3A8F), width: 2),
+        borderSide: const BorderSide(color: _navy, width: 2),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
