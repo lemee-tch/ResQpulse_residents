@@ -4,6 +4,8 @@ import 'login.dart';
 import 'home.dart';
 import 'hotlines.dart';
 import 'edit_profile.dart';
+import 'notification_settings.dart';
+import 'about.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -24,6 +26,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadCitizen() async {
     final citizen = await ApiService.getUser();
+    if (!mounted) return;
     setState(() {
       _citizen = citizen;
       _isLoading = false;
@@ -150,184 +153,212 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SafeArea(
-              child: Column(
-                children: [
-                  const SizedBox(height: 24),
-
-                  // Avatar
-                  Container(
-                    width: 90,
-                    height: 90,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFEDE7F6),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.person_outline_rounded,
-                      color: Color(0xFF7B5EA7),
-                      size: 52,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Name
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1A1A2E),
-                    ),
-                  ),
-
-                  const SizedBox(height: 4),
-
-                  // Phone / email
-                  Text(
-                    mobile.isNotEmpty ? mobile : email,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color.fromARGB(255, 80, 79, 79),
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Verification badge
-                  _verificationBadge(verificationStatus),
-
-                  if (verificationStatus == 'rejected' &&
-                      rejectionReason != null &&
-                      rejectionReason.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      child: Text(
-                        rejectionReason,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF991B1B),
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  const SizedBox(height: 28),
-
-                  // Menu Items
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+              // Scrolls on short phones instead of overflowing; on taller
+              // ones Logout still sits at the bottom of the screen.
+              child: CustomScrollView(
+                slivers: [
+                  SliverFillRemaining(
+                    hasScrollBody: false,
                     child: Column(
                       children: [
-                        _MenuItem(
-                          icon: Icons.account_circle_outlined,
-                          label: 'Personal Information',
-                          // Was a no-op stub — now opens the real
-                          // edit-profile form (see edit_profile.dart).
-                          onTap: _handleEditProfile,
-                        ),
-                        const SizedBox(height: 12),
-                        _MenuItem(
-                          icon: Icons.phone_outlined,
-                          label: 'Emergency Contacts',
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const EmergencyHotlinesScreen(),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _MenuItem(
-                          icon: Icons.notifications_outlined,
-                          label: 'Notification Settings',
-                          onTap: () {},
-                        ),
-                        const SizedBox(height: 12),
-                        _MenuItem(
-                          icon: Icons.star_outline_rounded,
-                          label: 'About ResQPulse',
-                          onTap: () {},
-                        ),
-                      ],
-                    ),
-                  ),
+                        const SizedBox(height: 24),
 
-                  const Spacer(),
-
-                  // Logout
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 24,
-                    ),
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: OutlinedButton(
-                        onPressed: () {
-                          showDialog(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              title: const Text(
-                                'Logout',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              content: const Text(
-                                'Are you sure you want to logout?',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx),
-                                  child: const Text(
-                                    'Cancel',
-                                    style: TextStyle(color: Colors.grey),
-                                  ),
-                                ),
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF1A3A8F),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                  onPressed: () {
-                                    Navigator.pop(ctx);
-                                    _handleLogout();
-                                  },
-                                  child: const Text(
-                                    'Logout',
-                                    style: TextStyle(color: Colors.white),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: Colors.grey[300]!,
-                            width: 1.5,
+                        // Avatar
+                        Container(
+                          width: 90,
+                          height: 90,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFEDE7F6),
+                            shape: BoxShape.circle,
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                          child: const Icon(
+                            Icons.person_outline_rounded,
+                            color: Color(0xFF7B5EA7),
+                            size: 52,
                           ),
                         ),
-                        child: const Text(
-                          'Logout',
-                          style: TextStyle(
-                            fontSize: 16,
+
+                        const SizedBox(height: 12),
+
+                        // Name
+                        Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 20,
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF1A1A2E),
                           ),
                         ),
-                      ),
+
+                        const SizedBox(height: 4),
+
+                        // Phone / email
+                        Text(
+                          mobile.isNotEmpty ? mobile : email,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Color.fromARGB(255, 80, 79, 79),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        // Verification badge
+                        _verificationBadge(verificationStatus),
+
+                        if (verificationStatus == 'rejected' &&
+                            rejectionReason != null &&
+                            rejectionReason.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Text(
+                              rejectionReason,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF991B1B),
+                              ),
+                            ),
+                          ),
+                        ],
+
+                        const SizedBox(height: 28),
+
+                        // Menu Items
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            children: [
+                              _MenuItem(
+                                icon: Icons.account_circle_outlined,
+                                label: 'Personal Information',
+                                // Was a no-op stub — now opens the real
+                                // edit-profile form (see edit_profile.dart).
+                                onTap: _handleEditProfile,
+                              ),
+                              const SizedBox(height: 12),
+                              _MenuItem(
+                                icon: Icons.phone_outlined,
+                                label: 'Emergency Contacts',
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const EmergencyHotlinesScreen(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              // These two used to do nothing when tapped.
+                              _MenuItem(
+                                icon: Icons.notifications_outlined,
+                                label: 'Notification Settings',
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const NotificationSettingsScreen(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              _MenuItem(
+                                icon: Icons.info_outline,
+                                label: 'About ResQPulse',
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const AboutScreen(),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const Spacer(),
+
+                        // Logout
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 24,
+                          ),
+                          child: SizedBox(
+                            width: double.infinity,
+                            height: 52,
+                            child: OutlinedButton(
+                              onPressed: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    title: const Text(
+                                      'Logout',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    content: const Text(
+                                      'Are you sure you want to logout?',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctx),
+                                        child: const Text(
+                                          'Cancel',
+                                          style: TextStyle(color: Colors.grey),
+                                        ),
+                                      ),
+                                      ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFF1A3A8F,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                        ),
+                                        onPressed: () {
+                                          Navigator.pop(ctx);
+                                          _handleLogout();
+                                        },
+                                        child: const Text(
+                                          'Logout',
+                                          style: TextStyle(color: Colors.white),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(
+                                  color: Colors.grey[300]!,
+                                  width: 1.5,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text(
+                                'Logout',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1A1A2E),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -363,14 +394,18 @@ class _MenuItem extends StatelessWidget {
           children: [
             Icon(icon, color: Colors.black, size: 22),
             const SizedBox(width: 14),
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1A1A2E),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF1A1A2E),
+                ),
               ),
             ),
+            // Shows the row opens another screen.
+            Icon(Icons.chevron_right, color: Colors.grey[400], size: 22),
           ],
         ),
       ),

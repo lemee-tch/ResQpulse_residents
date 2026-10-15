@@ -164,8 +164,13 @@ class _ReportCard extends StatelessWidget {
     'Landslide': Icons.terrain_outlined,
   };
 
-  IconData get _icon =>
-      _typeIcons[report.emergencyType] ?? Icons.warning_amber_rounded;
+  IconData get _icon => report.isSos
+      ? Icons.sos
+      : (_typeIcons[report.emergencyType] ?? Icons.warning_amber_rounded);
+
+  /// Red for an SOS, so it stands out from regular reports.
+  Color get _iconColor =>
+      report.isSos ? const Color(0xFFD32F2F) : const Color(0xFF1A3A8F);
 
   /// "Responding: Juan Dela Cruz" / "Responding: Juan Dela Cruz +2 more" —
   /// same summarizing pattern the responder app's own home screen uses
@@ -210,10 +215,10 @@ class _ReportCard extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: const Color(0xFF1A3A8F).withOpacity(0.08),
+                color: _iconColor.withOpacity(0.08),
                 shape: BoxShape.circle,
               ),
-              child: Icon(_icon, color: const Color(0xFF1A3A8F), size: 22),
+              child: Icon(_icon, color: _iconColor, size: 22),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -225,7 +230,7 @@ class _ReportCard extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          report.emergencyType,
+                          report.title,
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
@@ -329,7 +334,10 @@ class ReportStatusScreen extends StatelessWidget {
   static const Color _grey = Color(0xFFD1D5DB);
 
   int get _currentIndex {
-    final idx = _steps.indexWhere((s) => s.key == report.status);
+    // 'for_review': the responders are done and MDRRMO is checking their
+    // report — still the Responding step, not Resolved yet.
+    final key = report.status == 'for_review' ? 'responding' : report.status;
+    final idx = _steps.indexWhere((s) => s.key == key);
     return idx == -1 ? 0 : idx;
   }
 
@@ -342,7 +350,10 @@ class ReportStatusScreen extends StatelessWidget {
     final Color activeColor = declined ? _grey : (isResolved ? _green : _amber);
 
     // The first step says whether MDRRMO is still reviewing the report or
-    // has already sent it to responders.
+    // has already sent it to responders; the second, whether the
+    // responders are still on it or have finished (MDRRMO then checks
+    // their report before marking it resolved).
+    final bool responded = report.status == 'for_review';
     final List<_StatusStep> steps = [
       _StatusStep(
         key: 'pending',
@@ -351,7 +362,16 @@ class ReportStatusScreen extends StatelessWidget {
             ? 'MDRRMO is checking your report. Responders are sent once it\'s approved.'
             : 'Sent to responders — waiting for one to accept',
       ),
-      ..._steps.skip(1),
+      responded
+          ? const _StatusStep(
+              key: 'responding',
+              title: 'Responded',
+              subtitle:
+                  'The responders are done. MDRRMO is checking their report '
+                  'before marking it resolved.',
+            )
+          : _steps[1],
+      _steps[2],
     ];
 
     return Scaffold(
@@ -415,16 +435,19 @@ class ReportStatusScreen extends StatelessWidget {
               ),
             ],
 
-            // "Your Report" node — always filled navy, connects down with
-            // navy/amber (something is already in motion) toward Pending.
+            // "Your Report" node — filled navy (red for an SOS), connects
+            // down with navy/amber (something is already in motion)
+            // toward Pending.
             _TimelineRow(
-              circleColor: _navy,
-              icon: Icons.description,
+              circleColor: report.isSos ? const Color(0xFFD32F2F) : _navy,
+              icon: report.isSos ? Icons.sos : Icons.description,
               lineBelowColor: activeColor,
-              title: 'Your Report',
+              title: report.isSos ? 'Your SOS' : 'Your Report',
               subtitleLines: [
-                '${report.emergencyType} incident',
-                report.location,
+                report.isSos
+                    ? report.title
+                    : '${report.emergencyType} incident',
+                if (report.location.isNotEmpty) report.location,
                 report.formattedDate,
               ],
             ),
@@ -750,6 +773,11 @@ class _ReportData {
   final DateTime? createdAt;
   final List<Map<String, dynamic>> responders;
 
+  /// For an SOS: the emergency picked on the SOS screen (Fire, Flood…),
+  /// if any. The server keeps it apart from emergency_type, which is
+  /// always "SOS Emergency" for an SOS.
+  final String? sosType;
+
   // Every report waits for MDRRMO to review it before responders are sent
   // (needs_review). An admin can also decline it, with a reason.
   final bool needsReview;
@@ -764,13 +792,36 @@ class _ReportData {
     required this.status,
     required this.createdAt,
     required this.responders,
+    this.sosType,
     this.needsReview = false,
     this.declined = false,
     this.declineReason,
   });
 
+  /// Sent with the SOS button, not the report form.
+  bool get isSos => emergencyType == 'SOS Emergency';
+
+  /// What the card calls it: "SOS Alert — Fire" for an SOS (it used to
+  /// say just "SOS Emergency"), the emergency type for a report.
+  String get title {
+    if (!isSos) return emergencyType;
+    final type = sosType?.trim() ?? '';
+    return type.isEmpty ? 'SOS Alert' : 'SOS Alert — $type';
+  }
+
+  /// The server starts an SOS's location with "SOS Alert — " (and a guest
+  /// report's with "Guest Report — ") so MDRRMO can tell them apart in its
+  /// lists. The resident only needs the place.
+  static String _placeOnly(String location) {
+    final place = location
+        .replaceFirst(RegExp(r'^(SOS Alert|Guest Report)\s*[—–,-]\s*'), '')
+        .trim();
+    return place.isEmpty ? location : place;
+  }
+
   /// What the badge shows: 'review', 'declined', or the server status
-  /// ('pending', 'responding', 'resolved').
+  /// ('pending', 'responding', 'for_review', 'resolved'). 'for_review'
+  /// means the responders are done and MDRRMO is checking their report.
   String get displayStatus {
     if (declined) return 'declined';
     if (needsReview) return 'review';
@@ -781,7 +832,8 @@ class _ReportData {
     return _ReportData(
       id: json['id'] is int ? json['id'] : int.tryParse('${json['id']}') ?? 0,
       emergencyType: json['emergency_type']?.toString() ?? 'Emergency',
-      location: json['location']?.toString() ?? '',
+      location: _placeOnly(json['location']?.toString() ?? ''),
+      sosType: json['sos_emergency_type']?.toString(),
       description: json['description']?.toString() ?? '',
       status: json['status']?.toString() ?? 'pending',
       createdAt: DateTime.tryParse(
@@ -860,6 +912,12 @@ _StatusStyle _statusStyle(String status) {
         bg: Color(0xFFE0F2FE),
         fg: Color(0xFF0369A1),
         label: 'Responding',
+      );
+    case 'for_review':
+      return const _StatusStyle(
+        bg: Color(0xFFCCFBF1),
+        fg: Color(0xFF0F766E),
+        label: 'Responded',
       );
     case 'resolved':
       return const _StatusStyle(

@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'api_service.dart';
+import 'phone_call.dart';
 
 class SOSScreen extends StatefulWidget {
   final bool isGuest;
@@ -15,7 +15,8 @@ class SOSScreen extends StatefulWidget {
   State<SOSScreen> createState() => _SOSScreenState();
 }
 
-class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
+class _SOSScreenState extends State<SOSScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // ── Tap → capture → confirm / retake → send state ──
   //
   // Flow:
@@ -72,12 +73,18 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
   // ── Camera state ──
   CameraController? _cameraController;
   bool _cameraReady = false;
+  bool _cameraStarting = false; // _initCamera() is running
   String? _cameraError;
   File? _capturedPhoto;
 
   // ── Location state ──
   String _locationStatus = 'Getting your location...';
   bool _locationReady = false;
+
+  /// The location found when this screen opened (or the latest one since).
+  /// Send uses it when a fresh GPS fix takes too long — see
+  /// _positionForSend().
+  Position? _lastPosition;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
@@ -108,6 +115,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
+    WidgetsBinding.instance.addObserver(this);
     _initCamera();
     _primeLocation();
     if (widget.isGuest) _loadGuestDetails();
@@ -115,6 +123,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _waveController.dispose();
     _liveDotController.dispose();
@@ -123,10 +132,32 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
+  /// The camera is let go while the app is in the background (e.g. while
+  /// the resident is on a call to MDRRMO) and started again when they come
+  /// back. Before, it stayed attached and the preview came back black.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controller = _cameraController;
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      if (controller != null) {
+        _cameraController = null;
+        if (mounted) setState(() => _cameraReady = false);
+        controller.dispose();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (_cameraController == null && !_sosSent && _cameraError == null) {
+        _initCamera();
+      }
+    }
+  }
+
   // ── Guest details ─────────────────────────────────────────────────
 
-  /// Uses the name and number this guest saved last time; the first time
-  /// (nothing saved yet) the "Your details" pop-up opens right away.
+  /// The "Your details" pop-up opens every time a guest opens SOS, filled
+  /// in with the name and number saved last time, so they can confirm or
+  /// correct them before sending.
   Future<void> _loadGuestDetails() async {
     final saved = await ApiService.getGuestDetails();
     if (!mounted) return;
@@ -137,11 +168,9 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
         _guestMobile = saved['mobile'] ?? '';
       });
     }
-    if (!_guestDetailsValid) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _askGuestDetails();
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _askGuestDetails();
+    });
   }
 
   bool get _guestDetailsValid =>
@@ -184,6 +213,10 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
   // ── Camera lifecycle ──────────────────────────────────────────────
 
   Future<void> _initCamera() async {
+    // Asking for the camera permission briefly sends the app to the
+    // background and back, which calls this again — start only once.
+    if (_cameraStarting) return;
+    _cameraStarting = true;
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -213,26 +246,98 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
         _cameraController = controller;
         _cameraReady = true;
       });
+    } on CameraException catch (e) {
+      if (!mounted) return;
+      final denied = e.code.startsWith('CameraAccessDenied');
+      setState(
+        () => _cameraError = denied
+            ? 'The camera is not allowed for ResQPulse. You can still send '
+                  'your location, or allow the camera in your phone settings.'
+            : 'The camera isn\'t available right now. You can still send '
+                  'your location.',
+      );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _cameraError = 'Camera unavailable: $e');
+      setState(
+        () => _cameraError =
+            'The camera isn\'t available right now. You can still send your '
+            'location.',
+      );
+    } finally {
+      _cameraStarting = false;
     }
   }
 
   // ── Location priming ───────────────────────────────────────────────
 
+  /// Finds the location as soon as the screen opens, so it's ready by the
+  /// time the resident presses Send. Waits at most 20 seconds, then uses
+  /// the phone's last known location if there is one.
   Future<void> _primeLocation() async {
     try {
-      await _getCurrentLocation();
+      final position = await _getCurrentLocation().timeout(
+        const Duration(seconds: 20),
+      );
+      _lastPosition = position;
       if (!mounted) return;
       setState(() {
         _locationStatus = 'Location ready';
         _locationReady = true;
       });
+    } on TimeoutException {
+      final known = await _lastKnownPosition();
+      if (!mounted) return;
+      if (known != null) {
+        _lastPosition = known;
+        setState(() {
+          _locationStatus = 'Location ready';
+          _locationReady = true;
+        });
+      } else {
+        setState(
+          () => _locationStatus =
+              'Still looking for your location — it tries again when you send.',
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _locationStatus = e.toString());
     }
+  }
+
+  Future<Position?> _lastKnownPosition() async {
+    try {
+      return await Geolocator.getLastKnownPosition();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The location sent with the SOS: a fresh GPS fix if the phone gets one
+  /// within 10 seconds, otherwise the one found when the screen opened,
+  /// otherwise the phone's last known location. Before, Send waited for a
+  /// fresh fix with no time limit — indoors that could leave the SOS stuck
+  /// on "Sending…".
+  Future<Position> _positionForSend() async {
+    Object? problem;
+    try {
+      final fresh = await _getCurrentLocation().timeout(
+        const Duration(seconds: 10),
+      );
+      _lastPosition = fresh;
+      return fresh;
+    } catch (e) {
+      problem = e;
+    }
+
+    final fallback = _lastPosition ?? await _lastKnownPosition();
+    if (fallback != null) return fallback;
+
+    // Location services off / permission denied come as a message already.
+    throw problem is String
+        ? problem
+        : 'We couldn\'t find your location. Move near a window or outside '
+              'and try again, or call MDRRMO.';
   }
 
   Future<Position> _getCurrentLocation() async {
@@ -325,7 +430,7 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     });
 
     try {
-      final position = await _getCurrentLocation();
+      final position = await _positionForSend();
       if (!mounted) return;
 
       // ApiService.sendSOS() only attaches an Authorization header when a
@@ -364,17 +469,14 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
             : '';
         final useServerMessage =
             serverMessage.isNotEmpty && serverMessage != 'SOS sent.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              useServerMessage
-                  ? '🆘 $serverMessage'
-                  : '🆘 SOS sent. MDRRMO will verify it right away and then send responders.',
-            ),
-            backgroundColor: const Color(0xFF2E7D32),
-            duration: const Duration(seconds: 5),
-          ),
+        await _showSentDialog(
+          useServerMessage
+              ? serverMessage
+              : 'SOS sent. MDRRMO will verify it right away and then send responders.',
         );
+        // However the pop-up was closed — Back to Home, or the phone's
+        // Back button — the resident goes back to Home.
+        if (mounted) Navigator.of(context).pop();
       } else {
         // Stay on the confirm step (photo kept) so the user can just
         // press "Send SOS" again.
@@ -408,25 +510,131 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
     }
   }
 
+  /// Opens the dialer with #2441 (see phone_call.dart — a bare "#" in the
+  /// tel: link used to leave the dialer empty).
   Future<void> _callMDRRMO() async {
-    final uri = Uri.parse('tel:$_mdrrmoHotline');
-    try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Cannot place a call on this device.'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
+    final opened = await openDialer(_mdrrmoHotline);
+    if (!opened && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
+        const SnackBar(
+          content: Text(
+            "Couldn't open the phone app. Please dial $_mdrrmoHotline yourself.",
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
       );
     }
+  }
+
+  /// "SOS Sent" pop-up, shown once the alert went through: the server's
+  /// message and what to do while waiting, with Call MDRRMO (the pop-up
+  /// stays open) and Back to Home. Closes with Back to Home or the phone's
+  /// Back button; the caller then returns to Home.
+  Future<void> _showSentDialog(String message) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(22, 26, 22, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE8F5E9),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle_rounded,
+                  color: Color(0xFF2E7D32),
+                  size: 34,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'SOS Sent',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A2E),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF1A1A2E),
+                  height: 1.45,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Stay where you are if it\'s safe to do so, and keep your '
+                'phone nearby in case MDRRMO calls you.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[600],
+                  height: 1.45,
+                ),
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: _callMDRRMO,
+                  icon: const Icon(Icons.call, size: 18),
+                  label: const Text(
+                    'Call MDRRMO ($_mdrrmoHotline)',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF2E7D32),
+                    side: const BorderSide(
+                      color: Color(0xFF2E7D32),
+                      width: 1.4,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1A3A8F),
+                    foregroundColor: Colors.white,
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Back to Home',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // ── UI ───────────────────────────────────────────────────────────
@@ -737,10 +945,13 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
 
               const SizedBox(height: 24),
 
-              // ── Content: pre-send explainer OR post-send next steps ──
-              if (_sosSent) _buildSuccessCard() else _buildExplainerCard(),
-
-              const SizedBox(height: 20),
+              // ── Post-send next steps (behind the "SOS Sent" pop-up) ──
+              // The "How SOS works" card that used to sit here before
+              // sending was removed.
+              if (_sosSent) ...[
+                _buildSuccessCard(),
+                const SizedBox(height: 20),
+              ],
 
               // ── Safety disclaimer ─────────────────────────────────
               Row(
@@ -1214,77 +1425,31 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
             ),
           ),
         ),
+        // The SOS didn't go through (no internet, no location): a call
+        // works without mobile data.
+        if (_sendError != null && !_isSending) ...[
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: TextButton.icon(
+              onPressed: _callMDRRMO,
+              icon: const Icon(Icons.call, size: 19),
+              label: const Text(
+                'Call MDRRMO instead ($_mdrrmoHotline)',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF2E7D32),
+                backgroundColor: const Color(0xFFE8F5E9),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
-    );
-  }
-
-  Widget _buildExplainerCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'How SOS works',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1A1A2E),
-            ),
-          ),
-          const SizedBox(height: 14),
-          if (widget.isGuest) ...[
-            const _InfoStep(
-              icon: Icons.badge_outlined,
-              color: Color(0xFF6A1B9A),
-              title: 'Guests enter their name and number',
-              subtitle: 'So MDRRMO can call you back. Saved on this phone.',
-            ),
-            const SizedBox(height: 12),
-          ],
-          const _InfoStep(
-            icon: Icons.warning_amber_rounded,
-            color: Color(0xFFD32F2F),
-            title: 'You pick the type of emergency',
-            subtitle: 'It guides the AI that reads your photo for responders.',
-          ),
-          const SizedBox(height: 12),
-          const _InfoStep(
-            icon: Icons.camera_alt_outlined,
-            color: Color(0xFFF57C00),
-            title: 'A photo is captured with one tap',
-            subtitle:
-                'You can review it and retake it before anything is sent.',
-          ),
-          const SizedBox(height: 12),
-          const _InfoStep(
-            icon: Icons.my_location,
-            color: Color(0xFF1565C0),
-            title: 'Your live GPS location is shared',
-            subtitle: 'Pinpoints exactly where you are once you confirm.',
-          ),
-          const SizedBox(height: 12),
-          const _InfoStep(
-            icon: Icons.shield_outlined,
-            color: Color(0xFF2E7D32),
-            title: 'MDRRMO is alerted',
-            subtitle:
-                'MDRRMO verifies every SOS first, then sends responders right away.',
-          ),
-        ],
-      ),
     );
   }
 
@@ -1424,65 +1589,6 @@ class _SOSScreenState extends State<SOSScreen> with TickerProviderStateMixin {
           ),
         );
       },
-    );
-  }
-}
-
-// ── Info Step row (used in the explainer card) ────────────────────────────
-
-class _InfoStep extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String subtitle;
-
-  const _InfoStep({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(9),
-          ),
-          child: Icon(icon, color: color, size: 17),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1A1A2E),
-                ),
-              ),
-              const SizedBox(height: 1),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: Colors.grey[600],
-                  height: 1.3,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

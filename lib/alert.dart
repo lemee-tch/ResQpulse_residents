@@ -3,7 +3,11 @@ import 'package:flutter/services.dart';
 import 'api_service.dart';
 
 class AlertsScreen extends StatefulWidget {
-  const AlertsScreen({super.key});
+  /// Opens on "Alert History" instead of "Recent alerts" — used by Home's
+  /// "See all" and by a recent alert there that's older than 24 hours.
+  final bool openHistory;
+
+  const AlertsScreen({super.key, this.openHistory = false});
 
   @override
   State<AlertsScreen> createState() => _AlertsScreenState();
@@ -21,6 +25,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.openHistory) _selectedTab = 'Alert History';
     _loadAlerts();
   }
 
@@ -49,16 +54,14 @@ class _AlertsScreenState extends State<AlertsScreen> {
     }
   }
 
-  /// "Recent alerts" = the latest 5, so citizens see what's new without
-  /// scrolling; "Alert History" = everything ever broadcast. These are
-  /// the two tab labels verbatim — matching on 'Recent' alone used to
-  /// silently fail and made both tabs show the identical full list.
   /// "Recent alerts" = broadcast within the last 24 hours — an actual
   /// time window, not just "the newest few regardless of age." A wider
   /// window (this used to be 7 days) kept days-old alerts showing under
   /// "Recent" long after they stopped being recent. "Alert History" is
   /// the full archive — everything, including whatever's in Recent too,
-  /// since that's what an archive is.
+  /// since that's what an archive is. (The tab labels are matched
+  /// verbatim — matching on 'Recent' alone once made both tabs show the
+  /// same full list.)
   List<_AlertData> get _filtered {
     if (_selectedTab == 'Recent alerts') {
       final cutoff = DateTime.now().subtract(const Duration(hours: 24));
@@ -172,12 +175,17 @@ class _AlertsScreenState extends State<AlertsScreen> {
                   )
                 : _filtered.isEmpty
                 ? Center(
-                    child: Text(
-                      _selectedTab == 'Recent alerts'
-                          ? 'No new alerts this week — check Alert History for past updates.'
-                          : 'No alert history yet.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey[500], fontSize: 15),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Text(
+                        // "Recent" is the last 24 hours (see _filtered) —
+                        // this used to say "this week".
+                        _selectedTab == 'Recent alerts'
+                            ? 'No alerts in the last 24 hours — check Alert History for past updates.'
+                            : 'No alert history yet.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey[500], fontSize: 15),
+                      ),
                     ),
                   )
                 : RefreshIndicator(
@@ -278,41 +286,100 @@ class _AlertData {
 
 // ── Alert Card ────────────────────────────────────────────────────────────────
 
-/// Picks an icon + color that actually matches what the alert is about,
-/// by keyword-matching the title/subtitle — the Alert model has no
-/// hazard-category field (its `type` column is an audience switch:
-/// Citizens/Responders/Both, not a hazard type), so this is the only
-/// signal available. Falls back to a generic advisory icon rather than
-/// mislabeling every alert as a flood.
-class _AlertStyle {
+/// An alert's icon and color, picked from what the alert is about — see
+/// alertStyleFor(). Also used by Home's "Recent Alerts" card, which used
+/// to show the same icon for every alert.
+class AlertStyle {
   final IconData icon;
   final Color color;
-  const _AlertStyle(this.icon, this.color);
+  const AlertStyle(this.icon, this.color);
 }
 
-const _defaultAlertStyle = _AlertStyle(Icons.campaign, Color(0xFF1A3A8F));
+const AlertStyle _defaultAlertStyle = AlertStyle(
+  Icons.campaign,
+  Color(0xFF1A3A8F),
+);
 
-const Map<String, _AlertStyle> _alertKeywordStyles = {
-  'fire': _AlertStyle(Icons.local_fire_department, Color(0xFFD32F2F)),
-  'flood': _AlertStyle(Icons.water, Color(0xFF1565C0)),
-  'typhoon': _AlertStyle(Icons.cyclone, Color(0xFF6A1B9A)),
-  'storm': _AlertStyle(Icons.cyclone, Color(0xFF6A1B9A)),
-  'earthquake': _AlertStyle(Icons.landscape, Color(0xFF6D4C41)),
-  'landslide': _AlertStyle(Icons.terrain, Color(0xFF6D4C41)),
-  'evacuat': _AlertStyle(
-    Icons.directions_run,
-    Color(0xFFE65100),
-  ), // evacuate/evacuation
-  'health': _AlertStyle(Icons.local_hospital, Color(0xFF00897B)),
-  'power': _AlertStyle(Icons.bolt, Color(0xFFF9A825)),
-  'water supply': _AlertStyle(Icons.water_drop, Color(0xFF1565C0)),
-  'road': _AlertStyle(Icons.warning_amber_rounded, Color(0xFFE65100)),
-};
+/// Words (English and Filipino) that say what an alert is about. Each one
+/// is matched at the start of a word, so "broadcast" no longer counts as
+/// "road", and "bahay" doesn't count as "baha".
+class _KeywordStyle {
+  final RegExp pattern;
+  final AlertStyle style;
 
-_AlertStyle _styleForAlert(_AlertData alert) {
-  final text = '${alert.title} ${alert.subtitle ?? ''}'.toLowerCase();
-  for (final entry in _alertKeywordStyles.entries) {
-    if (text.contains(entry.key)) return entry.value;
+  _KeywordStyle(String words, this.style)
+    : pattern = RegExp('\\b($words)', caseSensitive: false);
+}
+
+/// Checked in this order — the first match wins.
+final List<_KeywordStyle> _alertKeywordStyles = [
+  _KeywordStyle(
+    'fire|sunog',
+    const AlertStyle(Icons.local_fire_department, Color(0xFFD32F2F)),
+  ),
+  _KeywordStyle(
+    'flood|baha\\b|bumabaha|pagbaha',
+    const AlertStyle(Icons.water, Color(0xFF1565C0)),
+  ),
+  _KeywordStyle(
+    'typhoon|storm|thunderstorm|tropical|bagyo|signal (no|#)',
+    const AlertStyle(Icons.cyclone, Color(0xFF6A1B9A)),
+  ),
+  _KeywordStyle(
+    'earthquake|lindol',
+    const AlertStyle(Icons.landscape, Color(0xFF6D4C41)),
+  ),
+  _KeywordStyle(
+    'landslide|guho',
+    const AlertStyle(Icons.terrain, Color(0xFF6D4C41)),
+  ),
+  _KeywordStyle(
+    'evacuat|lumikas|paglikas|ilikas',
+    const AlertStyle(Icons.directions_run, Color(0xFFE65100)),
+  ),
+  _KeywordStyle(
+    'rain|ulan',
+    const AlertStyle(Icons.umbrella, Color(0xFF1565C0)),
+  ),
+  _KeywordStyle('heat', const AlertStyle(Icons.thermostat, Color(0xFFD84315))),
+  _KeywordStyle(
+    'health|medical|dengue|vaccin',
+    const AlertStyle(Icons.local_hospital, Color(0xFF00897B)),
+  ),
+  _KeywordStyle(
+    'power|brownout|blackout|kuryente',
+    const AlertStyle(Icons.bolt, Color(0xFFF9A825)),
+  ),
+  _KeywordStyle(
+    'water supply|water interruption|walang tubig',
+    const AlertStyle(Icons.water_drop, Color(0xFF1565C0)),
+  ),
+  _KeywordStyle(
+    'suspen|walang pasok|no classes',
+    const AlertStyle(Icons.school, Color(0xFF3949AB)),
+  ),
+  _KeywordStyle(
+    'road|traffic|kalsada',
+    const AlertStyle(Icons.warning_amber_rounded, Color(0xFFE65100)),
+  ),
+];
+
+/// Picks an icon + color that actually matches what the alert is about,
+/// from the words in its title and subtitle (then its message, when the
+/// title says nothing) — the Alert model has no hazard-category field
+/// (its `type` column is an audience switch: Citizens/Responders/Both,
+/// not a hazard type), so this is the only signal available. Falls back
+/// to a generic announcement icon rather than mislabeling every alert as
+/// a flood.
+AlertStyle alertStyleFor(String? title, [String? subtitle, String? body]) {
+  final heading = '${title ?? ''} ${subtitle ?? ''}';
+  for (final keyword in _alertKeywordStyles) {
+    if (keyword.pattern.hasMatch(heading)) return keyword.style;
+  }
+  if (body != null && body.isNotEmpty) {
+    for (final keyword in _alertKeywordStyles) {
+      if (keyword.pattern.hasMatch(body)) return keyword.style;
+    }
   }
   return _defaultAlertStyle;
 }
@@ -323,7 +390,7 @@ class _AlertCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = _styleForAlert(alert);
+    final style = alertStyleFor(alert.title, alert.subtitle, alert.body);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

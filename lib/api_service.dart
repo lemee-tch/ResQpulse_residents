@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'push_notification.dart'; // for navigatorKey
+import 'push_notification.dart'; // navigatorKey, unregisterFcmToken()
 import 'home.dart'; // for HomeScreen
 
 class ApiService {
@@ -81,6 +82,8 @@ class ApiService {
   /// no matter which screen they're currently on.
   static Future<void> _forceGuestMode() async {
     await clearSession();
+    // This phone stops getting the removed account's notifications.
+    unawaited(unregisterFcmToken());
     final ctx = navigatorKey.currentContext;
     if (ctx == null) return;
     Navigator.of(ctx).pushAndRemoveUntil(
@@ -219,8 +222,9 @@ class ApiService {
         );
       }
 
+      // Longer than a normal call: the ID photo is uploaded on mobile data.
       final streamedResponse = await request.send().timeout(
-        const Duration(seconds: 20),
+        const Duration(seconds: 60),
       );
       final response = await http.Response.fromStream(streamedResponse);
       final data = jsonDecode(response.body);
@@ -404,7 +408,15 @@ class ApiService {
     }
   }
 
-  /// Validates the locally-stored token against the server.
+  /// Checks the saved login with the server and refreshes the saved
+  /// profile.
+  ///
+  /// Only a rejected login (401 — e.g. an admin rejected or removed the
+  /// account, which revokes its tokens) logs the resident out. A server
+  /// error (500, maintenance) or no internet keeps them logged in, and the
+  /// reply's statusCode says which it was (null = the server couldn't be
+  /// reached). Before, any failed check cleared the login, so a moment of
+  /// server trouble logged every resident out.
   static Future<ApiResponse> getMe() async {
     try {
       final headers = await _authHeaders();
@@ -416,17 +428,19 @@ class ApiService {
         final data = jsonDecode(response.body);
         await saveUser(data);
         return ApiResponse.success(data);
-      } else {
-        // 401 specifically means the token itself was rejected server-side
-        // (e.g. the account was rejected/removed by an admin, revoking all
-        // its tokens) — not just a generic failure. Bounce to guest mode.
-        if (response.statusCode == 401) {
-          await _forceGuestMode();
-        } else {
-          await clearSession();
-        }
-        return ApiResponse.error('Session expired. Please log in again.');
       }
+      if (response.statusCode == 401) {
+        // The token itself was rejected server-side — bounce to guest mode.
+        await _forceGuestMode();
+        return ApiResponse.error(
+          'Session expired. Please log in again.',
+          statusCode: 401,
+        );
+      }
+      return ApiResponse.error(
+        'Could not check your account right now. Please try again later.',
+        statusCode: response.statusCode,
+      );
     } catch (e) {
       return ApiResponse.error(_handleError(e));
     }
@@ -569,8 +583,10 @@ class ApiService {
         );
       }
 
+      // Longer than a normal call: up to 5 photos are uploaded on mobile
+      // data (they're shrunk first — see report_incident.dart).
       final streamed = await request.send().timeout(
-        const Duration(seconds: 20),
+        const Duration(seconds: 60),
       );
       final response = await http.Response.fromStream(streamed);
       final data = jsonDecode(response.body);
@@ -654,8 +670,10 @@ class ApiService {
         );
       }
 
+      // A bit longer than a normal call so a slow connection doesn't cut
+      // the SOS off halfway — the photo is small (medium camera preset).
       final streamed = await request.send().timeout(
-        const Duration(seconds: 20),
+        const Duration(seconds: 30),
       );
       final response = await http.Response.fromStream(streamed);
       final data = jsonDecode(response.body);
@@ -684,23 +702,27 @@ class ApiService {
       await http
           .post(Uri.parse('$baseUrl/logout'), headers: headers)
           .timeout(const Duration(seconds: 10));
-      await clearSession();
-      return ApiResponse.success({});
-    } catch (e) {
-      await clearSession();
-      return ApiResponse.success({});
+    } catch (_) {
+      // Logging out works offline too — the saved login is removed below.
     }
+    await clearSession();
+    // This phone stops getting the logged-out resident's notifications.
+    await unregisterFcmToken();
+    return ApiResponse.success({});
   }
 
   // ── Error handler ─────────────────────────────────────────────────
 
   static String _handleError(dynamic e) {
     final msg = e.toString();
-    if (msg.contains('SocketException') || msg.contains('Connection refused')) {
-      return 'Cannot connect to server. Check your internet or server URL.';
+    if (msg.contains('SocketException') ||
+        msg.contains('Connection refused') ||
+        msg.contains('Failed host lookup') ||
+        msg.contains('ClientException')) {
+      return "Can't connect right now. Check your internet connection and try again.";
     }
     if (msg.contains('TimeoutException')) {
-      return 'Connection timed out. Please try again.';
+      return 'The connection is too slow right now. Please try again.';
     }
     return 'Something went wrong. Please try again.';
   }
@@ -713,11 +735,26 @@ class ApiResponse {
   final dynamic data;
   final String? error;
 
-  ApiResponse._({required this.success, this.data, this.error});
+  /// On an error: the server's HTTP status, when it was given (so far only
+  /// getMe() sets it — 401 means the login was rejected). Null when the
+  /// server couldn't be reached (no internet, timeout).
+  final int? statusCode;
+
+  ApiResponse._({
+    required this.success,
+    this.data,
+    this.error,
+    this.statusCode,
+  });
 
   factory ApiResponse.success(dynamic data) =>
       ApiResponse._(success: true, data: data);
 
-  factory ApiResponse.error(String message, {dynamic data}) =>
-      ApiResponse._(success: false, error: message, data: data);
+  factory ApiResponse.error(String message, {dynamic data, int? statusCode}) =>
+      ApiResponse._(
+        success: false,
+        error: message,
+        data: data,
+        statusCode: statusCode,
+      );
 }

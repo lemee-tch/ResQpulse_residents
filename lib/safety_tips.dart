@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'phone_call.dart';
 
 class SafetyTipsScreen extends StatefulWidget {
   const SafetyTipsScreen({super.key});
@@ -12,11 +13,14 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
   String _query = '';
 
   // NOTE ON IMAGES:
-  // Every step below already has an `image` wired in so the screen is
-  // fully testable today. They're PLACEHOLDERS since real images aren't
-  // ready yet. To swap in real ones:
+  // Burns and Cuts have real pictures (assets/burn1.png …). The other
+  // topics show a large icon for each step (`icon:`) until real pictures
+  // are ready — they used to show 32 "Image unavailable" boxes. To add a
+  // real picture to a step, give it an `image:` (it's shown instead of
+  // the icon):
   //   - Network: image: 'https://yourcdn.com/images/cpr_step1.png'
-  //   - Local:   image: 'assets/images/cpr_step1.png'
+  //   - Local:   image: 'assets/images/cpr_step1.png' (also list it under
+  //              assets: in pubspec.yaml)
   // The _StepImage widget auto-detects which type it is.
 
   final List<_TipItem> _tips = const [
@@ -174,17 +178,17 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
           bullets: [
             'Keep the injured area still — do not try to straighten it.',
           ],
-          image: 'Fracture+1',
+          icon: Icons.do_not_touch,
         ),
         _StepItem(
           title: 'Splint it',
           bullets: ['Apply a splint if available to immobilize the limb.'],
-          image: 'Fracture+2',
+          icon: Icons.healing,
         ),
         _StepItem(
           title: 'Apply ice',
           bullets: ['Apply ice wrapped in cloth to reduce swelling.'],
-          image: 'Fracture+3',
+          icon: Icons.ac_unit,
         ),
         _StepItem(
           title: 'Get help',
@@ -204,24 +208,25 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Check & call',
           bullets: ['Check for responsiveness and call emergency services.'],
-          image: 'CPR+1',
+          // Shows the "Call MDRRMO" button.
+          isEmergencyStep: true,
         ),
         _StepItem(
           title: 'Open the airway',
           bullets: ['Tilt the head back and lift the chin to open the airway.'],
-          image: 'CPR+2',
+          icon: Icons.face,
         ),
         _StepItem(
           title: 'Compress',
           bullets: [
             'Give 30 chest compressions hard and fast (2 inches deep).',
           ],
-          image: 'CPR+3',
+          icon: Icons.favorite,
         ),
         _StepItem(
           title: 'Breathe',
           bullets: ['Give 2 rescue breaths, then repeat the cycle.'],
-          image: 'CPR+4',
+          icon: Icons.air,
         ),
       ],
     ),
@@ -238,26 +243,26 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
           bullets: [
             'Ask the person if they are choking. If they can\'t speak, act fast.',
           ],
-          image: 'Choking+1',
+          icon: Icons.record_voice_over,
         ),
         _StepItem(
           title: 'Back blows',
           bullets: [
             'Give up to 5 firm back blows between the shoulder blades.',
           ],
-          image: 'Choking+2',
+          icon: Icons.back_hand,
         ),
         _StepItem(
           title: 'Abdominal thrusts',
           bullets: ['Give up to 5 abdominal thrusts (Heimlich maneuver).'],
-          image: 'Heimlich',
+          icon: Icons.compress,
         ),
         _StepItem(
           title: 'Repeat',
           bullets: [
             'Alternate back blows and abdominal thrusts until the object is cleared.',
           ],
-          image: 'Choking+4',
+          icon: Icons.repeat,
         ),
       ],
     ),
@@ -275,19 +280,19 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
           bullets: [
             'Keep the person calm and still — movement spreads venom faster.',
           ],
-          image: 'Snake+1',
+          icon: Icons.self_improvement,
         ),
         _StepItem(
           title: 'Remove tight items',
           bullets: [
             'Remove rings or tight clothing near the bite before swelling starts.',
           ],
-          image: 'Snake+2',
+          icon: Icons.watch,
         ),
         _StepItem(
           title: 'Immobilize',
           bullets: ['Loosely immobilize the limb below heart level.'],
-          image: 'Snake+3',
+          icon: Icons.airline_seat_recline_normal,
         ),
         _StepItem(
           title: 'Get to a hospital',
@@ -307,19 +312,19 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Move to shade',
           bullets: ['Move the person to a cool, shaded area immediately.'],
-          image: 'HeatStroke+1',
+          icon: Icons.beach_access,
         ),
         _StepItem(
           title: 'Cool the body',
           bullets: [
             'Remove excess clothing and apply cool, wet cloths to skin.',
           ],
-          image: 'HeatStroke+2',
+          icon: Icons.water_drop,
         ),
         _StepItem(
           title: 'Hydrate',
           bullets: ['Offer small sips of cool water if the person is alert.'],
-          image: 'HeatStroke+3',
+          icon: Icons.local_drink,
         ),
         _StepItem(
           title: 'Monitor',
@@ -341,7 +346,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Sit forward',
           bullets: ['Sit up and lean slightly forward.'],
-          image: 'Nosebleed+1',
+          icon: Icons.event_seat,
         ),
         _StepItem(
           title: 'Pinch the nose',
@@ -349,17 +354,17 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
             'Pinch the soft part of the nose firmly for 10-15 minutes.',
           ],
           timeBadge: '10-15 minutes',
-          image: 'Nosebleed+2',
+          icon: Icons.pinch,
         ),
         _StepItem(
           title: 'Apply cold compress',
           bullets: ['Apply a cold compress to the bridge of the nose.'],
-          image: 'Nosebleed+3',
+          icon: Icons.ac_unit,
         ),
         _StepItem(
           title: 'Avoid blowing',
           bullets: ['Avoid blowing the nose for several hours after.'],
-          image: 'Nosebleed+4',
+          icon: Icons.block,
         ),
       ],
     ),
@@ -374,21 +379,21 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Remove the allergen',
           bullets: ['Remove the person from the allergen source if possible.'],
-          image: 'Allergy+1',
+          icon: Icons.directions_walk,
         ),
         _StepItem(
           title: 'Use an EpiPen',
           bullets: [
             'Use an epinephrine auto-injector on the outer thigh if available.',
           ],
-          image: 'Allergy+2',
+          icon: Icons.vaccines,
         ),
         _StepItem(
           title: 'Position them',
           bullets: [
             'Lay them flat and elevate legs, unless breathing is difficult.',
           ],
-          image: 'Allergy+3',
+          icon: Icons.airline_seat_flat,
         ),
         _StepItem(
           title: 'Monitor',
@@ -408,26 +413,26 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Drop',
           bullets: ['DROP to hands and knees immediately.'],
-          image: 'Quake+1',
+          icon: Icons.arrow_downward,
         ),
         _StepItem(
           title: 'Cover',
           bullets: [
             'Take COVER under a sturdy table or against an interior wall.',
           ],
-          image: 'Quake+2',
+          icon: Icons.table_restaurant,
         ),
         _StepItem(
           title: 'Hold on',
           bullets: ['HOLD ON until the shaking stops.'],
-          image: 'Quake+3',
+          icon: Icons.pan_tool,
         ),
         _StepItem(
           title: 'Evacuate carefully',
           bullets: [
             'After shaking stops, evacuate carefully and avoid damaged structures.',
           ],
-          image: 'Quake+4',
+          icon: Icons.directions_walk,
         ),
       ],
     ),
@@ -442,24 +447,24 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         _StepItem(
           title: 'Move to higher ground',
           bullets: ['Move to higher ground immediately.'],
-          image: 'Flood+1',
+          icon: Icons.terrain,
         ),
         _StepItem(
           title: 'Avoid floodwater',
           bullets: ['Do not walk or drive through floodwater.'],
-          image: 'Flood+2',
+          icon: Icons.flood,
         ),
         _StepItem(
           title: 'Turn off utilities',
           bullets: ['Turn off utilities at the main switch if safe to do so.'],
-          image: 'Flood+3',
+          icon: Icons.power_off,
         ),
         _StepItem(
           title: 'Follow alerts',
           bullets: [
             'Listen to emergency broadcasts and follow evacuation orders.',
           ],
-          image: 'Flood+4',
+          icon: Icons.campaign,
         ),
       ],
     ),
@@ -952,15 +957,35 @@ class _StepCard extends StatelessWidget {
             ),
           ],
 
-          // Full-width image — stays BELOW description/extras, per the existing layout
-          if (!step.isEmergencyStep) ...[
+          // Full-width picture — stays BELOW description/extras, per the
+          // existing layout: the step's real image when it has one,
+          // otherwise its icon.
+          if (!step.isEmergencyStep && _hasPicture(step.image)) ...[
             const SizedBox(height: 12),
-            _StepImage(imageSource: step.image),
+            _StepImage(
+              imageSource: step.image!,
+              fallbackIcon: step.icon,
+              color: color,
+            ),
+          ] else if (!step.isEmergencyStep && step.icon != null) ...[
+            const SizedBox(height: 12),
+            _StepIllustration(icon: step.icon!, color: color),
+          ],
+
+          // "Get help" steps: a button that calls MDRRMO right away.
+          if (step.isEmergencyStep) ...[
+            const SizedBox(height: 12),
+            const _EmergencyCallCard(),
           ],
         ],
       ),
     );
   }
+
+  /// A real picture: an asset in the app or an image online.
+  static bool _hasPicture(String? image) =>
+      image != null &&
+      (image.startsWith('assets/') || image.startsWith('http'));
 }
 
 // ── Don't Apply Chip ──────────────────────────────────────────────────────────
@@ -1023,55 +1048,160 @@ class _CheckGridTile extends StatelessWidget {
 }
 
 // ── Emergency Call Card ────────────────────────────────────────────────────────
+// Shown on the "Get help" steps (isEmergencyStep). The model always said
+// these steps show a call card, but there wasn't one.
 
-// ── Image Widget ──────────────────────────────────────────────────────────────
-// Renders a static image (asset or network). Works for any image format
-// (.png, .jpg, .webp, etc.) — nothing here is GIF-specific.
+class _EmergencyCallCard extends StatelessWidget {
+  const _EmergencyCallCard();
 
-class _StepImage extends StatelessWidget {
-  final String? imageSource;
-  final double height;
+  static const Color _red = Color(0xFFD32F2F);
 
-  const _StepImage({required this.imageSource, this.height = 180});
+  Future<void> _call(BuildContext context) async {
+    final opened = await openDialer('#2441');
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Couldn\'t open the phone app. Dial #2441 to reach MDRRMO Rosales.',
+          ),
+          backgroundColor: _red,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (imageSource == null || imageSource!.isEmpty) {
-      return _placeholder(icon: Icons.image_outlined, label: 'No image yet');
-    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _red.withOpacity(0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.local_hospital, color: _red, size: 22),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Need help now? Call MDRRMO Rosales.',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1A1A2E),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: () => _call(context),
+            icon: const Icon(Icons.call, size: 16),
+            label: const Text(
+              '#2441',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _red,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-    final bool isNetwork = imageSource!.startsWith('http');
+// ── Step Illustration ─────────────────────────────────────────────────────────
+// A large icon for a step that has no picture yet (it used to be an
+// "Image unavailable" box).
+
+class _StepIllustration extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+
+  const _StepIllustration({required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 104,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.7),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Center(
+        child: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.12),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: color, size: 36),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Image Widget ──────────────────────────────────────────────────────────────
+// Renders a static image (asset or network). Works for any image format
+// (.png, .jpg, .webp, etc.) — nothing here is GIF-specific. If it can't
+// load, the step's icon is shown instead of an "Image unavailable" box.
+
+class _StepImage extends StatelessWidget {
+  final String imageSource;
+  final IconData? fallbackIcon;
+  final Color color;
+  final double height;
+
+  const _StepImage({
+    required this.imageSource,
+    required this.fallbackIcon,
+    required this.color,
+    this.height = 180,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isNetwork = imageSource.startsWith('http');
 
     final Widget image = isNetwork
         ? Image.network(
-            imageSource!,
+            imageSource,
             height: height,
             width: double.infinity,
             fit: BoxFit.cover,
             loadingBuilder: (context, child, progress) {
               if (progress == null) return child;
-              return _placeholder(icon: null, label: 'Loading...');
+              return _loading();
             },
-            errorBuilder: (context, error, stack) => _placeholder(
-              icon: Icons.broken_image_outlined,
-              label: 'Image unavailable',
-            ),
+            errorBuilder: (context, error, stack) => _fallback(),
           )
         : Image.asset(
-            imageSource!,
+            imageSource,
             height: height,
             width: double.infinity,
             fit: BoxFit.cover,
-            errorBuilder: (context, error, stack) => _placeholder(
-              icon: Icons.broken_image_outlined,
-              label: 'Image unavailable',
-            ),
+            errorBuilder: (context, error, stack) => _fallback(),
           );
 
     return ClipRRect(borderRadius: BorderRadius.circular(10), child: image);
   }
 
-  Widget _placeholder({IconData? icon, required String label}) {
+  Widget _fallback() => _StepIllustration(
+    icon: fallbackIcon ?? Icons.medical_services_outlined,
+    color: color,
+  );
+
+  Widget _loading() {
     return Container(
       height: height,
       width: double.infinity,
@@ -1079,23 +1209,11 @@ class _StepImage extends StatelessWidget {
         color: Colors.white.withOpacity(0.6),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) Icon(icon, size: 32, color: Colors.grey.shade500),
-            if (icon == null)
-              const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-            ),
-          ],
+      child: const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );
@@ -1107,7 +1225,8 @@ class _StepImage extends StatelessWidget {
 class _StepItem {
   final String title;
   final List<String> bullets;
-  final String? image;
+  final String? image; // a real picture: 'assets/…' or 'https://…'
+  final IconData? icon; // shown when the step has no picture
   final String? timeBadge;
   final List<String>? dontApplyItems; // emoji list, rendered with red X overlay
   final List<String>? checkGrid; // labels for body-check style tiles
@@ -1117,6 +1236,7 @@ class _StepItem {
     required this.title,
     this.bullets = const [],
     this.image,
+    this.icon,
     this.timeBadge,
     this.dontApplyItems,
     this.checkGrid,

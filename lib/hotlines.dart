@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'api_service.dart';
+import 'phone_call.dart';
 
 class EmergencyHotlinesScreen extends StatefulWidget {
   final bool isGuest;
@@ -197,32 +197,29 @@ class _EmergencyHotlinesScreenState extends State<EmergencyHotlinesScreen> {
     return categories;
   }
 
+  /// Opens the dialer with the number (see phone_call.dart — it keeps the
+  /// "#" of MDRRMO's #2441, which used to be stripped so the phone dialed
+  /// 2441).
   Future<void> _callNumber(BuildContext context, String number) async {
-    final cleaned = number.replaceAll(RegExp(r'[^\d+]'), '');
-    if (cleaned.isEmpty) {
+    if (!RegExp(r'\d').hasMatch(number)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           content: Text('No number on file yet.'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
-    final uri = Uri.parse('tel:$cleaned');
-    try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cannot call $number on this device.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
+
+    final opened = await openDialer(number);
+    if (!opened && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text(
+            "Couldn't open the phone app. Please dial $number yourself.",
+          ),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }

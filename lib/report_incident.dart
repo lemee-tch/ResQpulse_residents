@@ -310,13 +310,22 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
 
   bool get _canAddMore => _pickedImages.length < _maxPhotos;
 
+  // Photos are shrunk before they're sent. A phone camera photo is often
+  // 3–6 MB: the server refuses any photo over 5 MB, and 3–5 full-size
+  // photos took too long to upload on mobile data. At 1600 px they're
+  // still clear enough to see what happened, at a few hundred KB each.
+  static const double _photoMaxSide = 1600;
+  static const int _photoQuality = 75;
+
   Future<void> _pickImageFromCamera() async {
     if (!_canAddMore) return;
     try {
       final picker = ImagePicker();
       final pickedFile = await picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 80,
+        maxWidth: _photoMaxSide,
+        maxHeight: _photoMaxSide,
+        imageQuality: _photoQuality,
       );
       if (pickedFile != null) {
         setState(() => _pickedImages.add(File(pickedFile.path)));
@@ -337,7 +346,11 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
       final picker = ImagePicker();
       final remainingSlots = _maxPhotos - _pickedImages.length;
 
-      final pickedFiles = await picker.pickMultiImage(imageQuality: 80);
+      final pickedFiles = await picker.pickMultiImage(
+        maxWidth: _photoMaxSide,
+        maxHeight: _photoMaxSide,
+        imageQuality: _photoQuality,
+      );
       if (pickedFiles.isNotEmpty) {
         final toAdd = pickedFiles.take(remainingSlots).toList();
         setState(() {

@@ -46,6 +46,13 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
+        <!-- Notifications that arrive while the app is closed use the "Alerts"
+             channel the app creates when it starts (high importance), so they
+             pop up as a banner. Without this they went to Android's default
+             "Miscellaneous" channel, which doesn't pop up. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="alerts_channel"/>
     </application>
 
     <queries>

@@ -92,18 +92,26 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
-
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: _HomeTab(
-        waveController: _waveController,
-        onSOS: _handleSOS,
-        onRefresh: _handleRefresh,
-        alertsCardKey: _alertsCardKey,
-        citizenName: _displayName,
-        isGuest: widget.isGuest,
-        isVerified: _isVerified,
+    // White status-bar icons over the blue header — they were dark and
+    // hard to see. Set this way, they come back whenever Home is on
+    // screen again, even after a screen that made them dark.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light, // Android
+        statusBarBrightness: Brightness.dark, // iPhone
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: _HomeTab(
+          waveController: _waveController,
+          onSOS: _handleSOS,
+          onRefresh: _handleRefresh,
+          alertsCardKey: _alertsCardKey,
+          citizenName: _displayName,
+          isGuest: widget.isGuest,
+          isVerified: _isVerified,
+        ),
       ),
     );
   }
@@ -909,9 +917,12 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
                 ),
               ),
               GestureDetector(
+                // Every alert, newest first.
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const AlertsScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => const AlertsScreen(openHistory: true),
+                  ),
                 ),
                 child: const Text(
                   'See all',
@@ -940,68 +951,91 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                'No alerts yet.',
+                'No alerts in the last 3 days.',
                 style: TextStyle(fontSize: 13, color: Colors.grey[500]),
               ),
             )
           else
             ..._alerts.map((alert) {
-              final isAlertType = alert['type'] == 'Alerts';
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color: isAlertType
-                            ? const Color(0xFFFFEBEE)
-                            : const Color(0xFFE3F2FD),
-                        shape: BoxShape.circle,
+              // The same icon and color as on the Alerts screen, from
+              // what the alert is about. This used to check
+              // alert['type'] — who the alert was sent to — so every
+              // alert got the same icon.
+              final style = alertStyleFor(
+                alert['title']?.toString(),
+                alert['subtitle']?.toString(),
+                alert['body']?.toString(),
+              );
+              final subtitle = alert['subtitle']?.toString() ?? '';
+              final created = DateTime.tryParse(
+                alert['created_at']?.toString() ?? '',
+              );
+              // Alerts' "Recent" tab only holds the last 24 hours, so an
+              // older one opens on Alert History, where it is.
+              final olderThanADay =
+                  created != null &&
+                  DateTime.now().difference(created.toLocal()) >
+                      const Duration(hours: 24);
+
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AlertsScreen(openHistory: olderThanADay),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: style.color.withOpacity(0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(style.icon, color: style.color, size: 17),
                       ),
-                      child: Icon(
-                        isAlertType
-                            ? Icons.warning_amber_rounded
-                            : Icons.info_outline,
-                        color: isAlertType
-                            ? const Color(0xFFD32F2F)
-                            : const Color(0xFF1565C0),
-                        size: 17,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            alert['title'] ?? '',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13.5,
-                              color: Color(0xFF1A1A2E),
-                            ),
-                          ),
-                          if (alert['subtitle'] != null) ...[
-                            const SizedBox(height: 1),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              alert['subtitle'],
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
+                              alert['title']?.toString() ?? '',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13.5,
+                                color: Color(0xFF1A1A2E),
                               ),
                             ),
+                            if (subtitle.isNotEmpty) ...[
+                              const SizedBox(height: 1),
+                              Text(
+                                subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
-                    ),
-                    Text(
-                      _timeAgo(alert['created_at']),
-                      style: TextStyle(fontSize: 11, color: Colors.grey[400]),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      Text(
+                        _timeAgo(alert['created_at']?.toString()),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[400]),
+                      ),
+                    ],
+                  ),
                 ),
               );
             }),
