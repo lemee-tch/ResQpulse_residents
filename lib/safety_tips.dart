@@ -171,28 +171,54 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
       emoji: '🦴',
       color: Color(0xFF5D4037),
       bgColor: Color(0xFFEFEBE9),
-      remember: 'Never try to realign a suspected fracture yourself.',
+      remember: 'Keep the person calm and still until medical help arrives.',
       steps: [
         _StepItem(
-          title: 'Keep it still',
+          title: 'Check the injury',
           bullets: [
-            'Keep the injured area still — do not try to straighten it.',
+            'Do not move the person unnecessarily.',
+            'Check for deformity, swelling, pain, or inability to move the injured ara.',
           ],
-          icon: Icons.do_not_touch,
+          image: 'assets/frac1.png',
         ),
         _StepItem(
-          title: 'Splint it',
-          bullets: ['Apply a splint if available to immobilize the limb.'],
-          icon: Icons.healing,
+          title: 'Do not move the injured area',
+          bullets: [
+            'Keep the person still.'
+                'Moving the injury cann cause more pain or damage.',
+          ],
+          image: 'assets/frac2.png',
         ),
         _StepItem(
-          title: 'Apply ice',
-          bullets: ['Apply ice wrapped in cloth to reduce swelling.'],
-          icon: Icons.ac_unit,
+          title: 'Stabilize the injured area',
+          bullets: [
+            'Support the area above and below the fracture.',
+            'Use a splint, or any firm support.',
+          ],
+          image: 'assets/frac3.png',
         ),
         _StepItem(
-          title: 'Get help',
-          bullets: ['Seek emergency medical help immediately.'],
+          title: 'Apply ice (If swelling)',
+          bullets: [
+            'Aplly ice pack wrapped in a cloth around the injured area.',
+            'Do not apply ice directly on the skin.',
+          ],
+          image: 'assets/frac4.png',
+        ),
+        _StepItem(
+          title: 'Check for circulation',
+          bullets: [
+            'Check if finger or toes beyond the injury are warm and pink.',
+            'Ask if the person can feel the wiggle their fingers or toes.',
+          ],
+          image: 'assets/frac5.png',
+        ),
+        _StepItem(
+          title: 'Get medical help',
+          bullets: [
+            'Seek immediate medical care or call emergency services.',
+            'Do not remove the splint.',
+          ],
           isEmergencyStep: true,
         ),
       ],
@@ -203,30 +229,60 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
       emoji: '❤️',
       color: Color(0xFFD32F2F),
       bgColor: Color(0xFFFFEBEE),
-      remember: 'Push hard, push fast, and don\'t stop until help arrives.',
+      remember:
+          'Quick action can save life — Call 911, start CPR, and don not stop until help arrives.',
       steps: [
         _StepItem(
-          title: 'Check & call',
-          bullets: ['Check for responsiveness and call emergency services.'],
-          // Shows the "Call MDRRMO" button.
-          isEmergencyStep: true,
-        ),
-        _StepItem(
-          title: 'Open the airway',
-          bullets: ['Tilt the head back and lift the chin to open the airway.'],
-          icon: Icons.face,
-        ),
-        _StepItem(
-          title: 'Compress',
+          title: 'Check for response',
           bullets: [
-            'Give 30 chest compressions hard and fast (2 inches deep).',
+            'Tap the person shoulder and shout "Are you okay?"',
+            'If there is no response, call for help.',
           ],
-          icon: Icons.favorite,
+          image: 'assets/cpr1.png',
         ),
         _StepItem(
-          title: 'Breathe',
-          bullets: ['Give 2 rescue breaths, then repeat the cycle.'],
-          icon: Icons.air,
+          title: 'Check for breathing',
+          bullets: [
+            'Look for the movement.',
+            'Listen for breathing.',
+            'Check for no more than 10 seconds.',
+          ],
+          image: 'assets/cpr2.png',
+        ),
+        _StepItem(
+          title: 'Start chest compressions',
+          bullets: [
+            'Place the heel of one hand on the center of the chest.',
+            'Place the other hand on top and interlock fingers.',
+            'Push hard and fast, at least 2 inches deep, at a rate of 100-120 compressions per minute.',
+          ],
+          image: 'assets/cpr3.png',
+        ),
+        _StepItem(
+          title: 'Give rescue breaths',
+          bullets: [
+            'After 30 compressions, tilt the head back and lift the chin.',
+            'Pinch the nose, shut the mouth, and give 2 breaths.',
+            'Each breath should last about 1 second.',
+          ],
+          image: 'assets/cpr4.png',
+        ),
+        _StepItem(
+          title: 'Continue CPR',
+          bullets: [
+            'Repeat cycle of 30 compressions and 2 breaths.',
+            'Continue until help arrives or the person shows signs of life.',
+          ],
+          image: 'assets/cpr6.png',
+        ),
+        _StepItem(
+          title: 'Use an AED if available',
+          bullets: [
+            'Turn on the AED and follow the voice instructions.',
+            'Attach the pads, and let the AED analyze the heart rhythm.',
+            'Deliver a shock if advised, then resume CPR.',
+          ],
+          image: 'assets/cpr5.png',
         ),
       ],
     ),
@@ -236,33 +292,57 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
       emoji: '🫁',
       color: Color(0xFF1565C0),
       bgColor: Color(0xFFE3F2FD),
-      remember: 'Alternate back blows and thrusts until the object clears.',
+      remember: 'Act Quickly. The Heimmlich manuever can save a life.',
       steps: [
         _StepItem(
-          title: 'Confirm choking',
+          title: 'Check if they are choking',
           bullets: [
             'Ask the person if they are choking. If they can\'t speak, act fast.',
+            'Signs: cannot speak,, cough,, or breathe; making high pitched sounds; holding throat; panicked expression.',
           ],
-          icon: Icons.record_voice_over,
+          image: 'assets/choke1.png',
         ),
         _StepItem(
-          title: 'Back blows',
+          title: 'If the person can cough, let the cough',
           bullets: [
-            'Give up to 5 firm back blows between the shoulder blades.',
+            'Encourage them to cough forcefully.',
+            'Do not inteerfere if they are  coughing, breathing, or making sounds.',
           ],
-          icon: Icons.back_hand,
+          image: 'assets/choke2.png',
         ),
         _StepItem(
-          title: 'Abdominal thrusts',
-          bullets: ['Give up to 5 abdominal thrusts (Heimlich maneuver).'],
-          icon: Icons.compress,
-        ),
-        _StepItem(
-          title: 'Repeat',
+          title: 'If they cannot cough, speak, or breathe, call for help',
           bullets: [
-            'Alternate back blows and abdominal thrusts until the object is cleared.',
+            'Call emergency services immediately.',
+            'If someone is with you, ask them to call for help while you begin the back blows.',
           ],
-          icon: Icons.repeat,
+          image: 'assets/choke3.png',
+        ),
+        _StepItem(
+          title: 'Give 5 back blows',
+          bullets: [
+            'Stand to the side and slightly behind the person.',
+            'Lean  them forward.',
+            'Give 5 firm back blows between the shoulder blades with the heel of your hand.',
+          ],
+          image: 'assets/choke4.png',
+        ),
+        _StepItem(
+          title: 'Give 5 abdominal thrusts (Heimlich maneuver)',
+          bullets: [
+            'Stand behind the person and wrap your arms around their waist.',
+            'Make a fist with one hand and place it just above the navel.',
+            'Grasp the fist with your other hand and give up to 5 quick, inward and upward thrusts.',
+          ],
+          image: 'assets/choke5.png',
+        ),
+        _StepItem(
+          title: 'Repeat back blows and thrusts',
+          bullets: [
+            'Continue cycles of 5 back blows and 5 abdominal thrusts.',
+            'Repeat until the object comes out or the person becomes conscious.',
+          ],
+          image: 'assets/choke6.png',
         ),
       ],
     ),
@@ -442,29 +522,58 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
       emoji: '🌧️',
       color: Color(0xFF1565C0),
       bgColor: Color(0xFFE3F2FD),
-      remember: 'Never walk or drive through floodwater — turn back.',
+      remember:
+          'Floods can happen fast. Stay alert, stay safe, and follow the guidelines of local authorities.',
       steps: [
         _StepItem(
-          title: 'Move to higher ground',
-          bullets: ['Move to higher ground immediately.'],
-          icon: Icons.terrain,
-        ),
-        _StepItem(
-          title: 'Avoid floodwater',
-          bullets: ['Do not walk or drive through floodwater.'],
-          icon: Icons.flood,
-        ),
-        _StepItem(
-          title: 'Turn off utilities',
-          bullets: ['Turn off utilities at the main switch if safe to do so.'],
-          icon: Icons.power_off,
-        ),
-        _StepItem(
-          title: 'Follow alerts',
+          title: 'Stay informed',
           bullets: [
-            'Listen to emergency broadcasts and follow evacuation orders.',
+            'Monitor weather and flood warnings.',
+            'Follow instructions from local authorities.',
           ],
-          icon: Icons.campaign,
+          image: 'assets/flood1.png',
+        ),
+        _StepItem(
+          title: 'Prepare before flooding',
+          bullets: [
+            'Move important documents, valuables, and electronics to higher ground.',
+            'Prepare an emergency kit with essentials.',
+          ],
+          image: 'assets/flood2.png',
+        ),
+        _StepItem(
+          title: 'Evacuate if told to do so',
+          bullets: [
+            'follow evacuation orders immediately.',
+            'Take the safest route to higher ground or designated shelters.',
+          ],
+          image: 'assets/flood3.png',
+        ),
+        _StepItem(
+          title: 'Do NOT walk, swim, or dive through the flood waters',
+          bullets: [
+            'Just 6 inches of moving water can knock you down.',
+            '12 inches of moving water can sweep a car away.',
+          ],
+          image: 'assets/flood4.png',
+        ),
+        _StepItem(
+          title: 'If you are in a building',
+          bullets: [
+            'Move to higher floors.',
+            'Do not use elevators.',
+            'Avoid basement and underground areas.',
+          ],
+          image: 'assets/flood5.png',
+        ),
+        _StepItem(
+          title: 'After the flood',
+          bullets: [
+            'Return home only when authorities say it is safe.',
+            'Avoid flood waters and unstable structures.',
+            'Check for gas leaks, damaged wiring, and clean water sources.',
+          ],
+          image: 'assets/flood6.png',
         ),
       ],
     ),

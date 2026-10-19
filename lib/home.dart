@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'report_incident.dart';
 import 'my_reports.dart';
 import 'alert.dart';
+import 'cleared_alerts.dart';
 import 'centers.dart';
 import 'profile.dart';
 import 'safety_tips.dart';
@@ -432,10 +433,16 @@ class _HomeTab extends StatelessWidget {
                             _showVerificationRequired(context);
                             return;
                           }
+                          // Back from Alerts: alerts cleared there leave
+                          // Recent Alerts too.
                           Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (_) => const AlertsScreen(),
+                            ),
+                          ).then(
+                            (_) => alertsCardKey.currentState?.refresh(
+                              showSpinner: false,
                             ),
                           );
                         },
@@ -848,12 +855,16 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
     _loadAlerts();
   }
 
-  Future<void> refresh() => _loadAlerts();
+  Future<void> refresh({bool showSpinner = true}) =>
+      _loadAlerts(showSpinner: showSpinner);
 
-  Future<void> _loadAlerts() async {
-    if (mounted) setState(() => _isLoading = true);
+  /// The 3 newest alerts from the last 3 days, without the ones cleared on
+  /// this phone (Alerts screen → swipe or Clear all).
+  Future<void> _loadAlerts({bool showSpinner = true}) async {
+    if (mounted && showSpinner) setState(() => _isLoading = true);
 
     final result = await ApiService.getAlerts();
+    final cleared = await ClearedAlerts.ids();
     if (!mounted) return;
 
     setState(() {
@@ -863,6 +874,8 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
         _alerts = (result.data as List)
             .map((e) => e as Map<String, dynamic>)
             .where((alert) {
+              final id = int.tryParse('${alert['id'] ?? ''}');
+              if (id != null && cleared.contains(id)) return false;
               final created = DateTime.tryParse(
                 alert['created_at']?.toString() ?? '',
               );
@@ -872,6 +885,14 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
             .toList();
       }
     });
+  }
+
+  /// Opens Alerts; back here, alerts cleared there are gone from this card.
+  void _openAlerts({required bool history}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => AlertsScreen(openHistory: history)),
+    ).then((_) => _loadAlerts(showSpinner: false));
   }
 
   String _timeAgo(String? createdAt) {
@@ -918,12 +939,7 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
               ),
               GestureDetector(
                 // Every alert, newest first.
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AlertsScreen(openHistory: true),
-                  ),
-                ),
+                onTap: () => _openAlerts(history: true),
                 child: const Text(
                   'See all',
                   style: TextStyle(
@@ -979,12 +995,7 @@ class _RecentAlertsCardState extends State<_RecentAlertsCard> {
 
               return GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => AlertsScreen(openHistory: olderThanADay),
-                  ),
-                ),
+                onTap: () => _openAlerts(history: olderThanADay),
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Row(
