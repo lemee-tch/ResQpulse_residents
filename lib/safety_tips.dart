@@ -95,6 +95,69 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         ),
       ],
     ),
+    _TipItem(
+      title: 'Fire',
+      subtitle: 'Learn what to do',
+      emoji: '🧯',
+      color: Color(0xFFD32F2F),
+      bgColor: Color(0xFFFFEBEE),
+      remember:
+          'Quick action can save life — Call 911, start CPR, and don not stop until help arrives.',
+      steps: [
+        _StepItem(
+          title: 'Check for response',
+          bullets: [
+            'Tap the person shoulder and shout "Are you okay?"',
+            'If there is no response, call for help.',
+          ],
+          image: 'assets/fire1.png',
+        ),
+        _StepItem(
+          title: 'Check for breathing',
+          bullets: [
+            'Look for the movement.',
+            'Listen for breathing.',
+            'Check for no more than 10 seconds.',
+          ],
+          image: 'assets/fire2.png',
+        ),
+        _StepItem(
+          title: 'Start chest compressions',
+          bullets: [
+            'Place the heel of one hand on the center of the chest.',
+            'Place the other hand on top and interlock fingers.',
+            'Push hard and fast, at least 2 inches deep, at a rate of 100-120 compressions per minute.',
+          ],
+          image: 'assets/fire3.png',
+        ),
+        _StepItem(
+          title: 'Give rescue breaths',
+          bullets: [
+            'After 30 compressions, tilt the head back and lift the chin.',
+            'Pinch the nose, shut the mouth, and give 2 breaths.',
+            'Each breath should last about 1 second.',
+          ],
+          image: 'assets/fire4.png',
+        ),
+        _StepItem(
+          title: 'Continue CPR',
+          bullets: [
+            'Repeat cycle of 30 compressions and 2 breaths.',
+            'Continue until help arrives or the person shows signs of life.',
+          ],
+          image: 'assets/fire5.png',
+        ),
+        _StepItem(
+          title: 'Use an AED if available',
+          bullets: [
+            'Turn on the AED and follow the voice instructions.',
+            'Attach the pads, and let the AED analyze the heart rhythm.',
+            'Deliver a shock if advised, then resume CPR.',
+          ],
+          image: 'assets/fire6.png',
+        ),
+      ],
+    ),
 
     // ── Remaining topics: simple bullet format, same layout ───────────────
     _TipItem(

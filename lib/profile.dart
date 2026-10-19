@@ -5,7 +5,6 @@ import 'login.dart';
 import 'home.dart';
 import 'hotlines.dart';
 import 'edit_profile.dart';
-import 'notification_settings.dart';
 import 'about.dart';
 
 /// Home → Profile.
@@ -456,14 +455,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             title: 'Emergency Contacts',
             subtitle: 'MDRRMO, police, fire and your barangay',
             onTap: () => _open(const EmergencyHotlinesScreen()),
-          ),
-          divider,
-          _MenuRow(
-            icon: Icons.notifications_outlined,
-            color: const Color(0xFFF57C00),
-            title: 'Notification Settings',
-            subtitle: 'Alerts and updates on your reports',
-            onTap: () => _open(const NotificationSettingsScreen()),
           ),
           divider,
           _MenuRow(

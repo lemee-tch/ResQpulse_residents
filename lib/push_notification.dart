@@ -31,9 +31,6 @@ const AndroidNotificationChannel _alertsChannel = AndroidNotificationChannel(
 /// Before, a Firebase error at start stopped the app from opening.
 bool _firebaseReady = false;
 
-/// Whether push notifications can work on this phone (Firebase started).
-bool get pushAvailable => _firebaseReady;
-
 // ── Where a tapped notification leads ─────────────────────────────────
 //
 // 'reports' → My Reports, for updates on the resident's own report or SOS
@@ -253,66 +250,5 @@ Future<void> unregisterFcmToken() async {
     );
   } catch (e) {
     debugPrint('FCM token not deleted: $e');
-  }
-}
-
-// ── For Profile → Notification Settings ───────────────────────────────
-
-/// true = notifications are allowed for ResQPulse, false = turned off,
-/// null = not decided yet or unknown (push not available on this phone).
-Future<bool?> notificationsAllowed() async {
-  if (!_firebaseReady) return null;
-  try {
-    final settings = await FirebaseMessaging.instance.getNotificationSettings();
-    return switch (settings.authorizationStatus) {
-      AuthorizationStatus.authorized || AuthorizationStatus.provisional => true,
-      AuthorizationStatus.denied => false,
-      _ => null,
-    };
-  } catch (_) {
-    return null;
-  }
-}
-
-/// Asks the resident to allow notifications (Android 13+ shows its own
-/// prompt) and, when they do, makes sure the server has this phone's
-/// token. Returns whether notifications are allowed now. When the phone
-/// won't ask again, the caller opens the phone's settings instead.
-Future<bool> askNotificationPermission() async {
-  if (!_firebaseReady) return false;
-  try {
-    final settings = await FirebaseMessaging.instance.requestPermission();
-    final allowed =
-        settings.authorizationStatus == AuthorizationStatus.authorized ||
-        settings.authorizationStatus == AuthorizationStatus.provisional;
-    if (allowed) unawaited(_sendFcmToken());
-    return allowed;
-  } catch (_) {
-    return false;
-  }
-}
-
-/// Shows a sample notification on the Alerts channel, so the resident can
-/// see that notifications work on this phone. Returns false if it couldn't.
-Future<bool> showTestNotification() async {
-  try {
-    await _localNotifications.show(
-      7, // a fixed id: tapping "Send a test" again replaces it
-      'ResQPulse',
-      'Notifications are working. Alerts from MDRRMO Rosales will look like this.',
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          _alertsChannel.id,
-          _alertsChannel.name,
-          channelDescription: _alertsChannel.description,
-          importance: Importance.high,
-          priority: Priority.high,
-          color: const Color(0xFFC62828),
-        ),
-      ),
-    );
-    return true;
-  } catch (_) {
-    return false;
   }
 }
