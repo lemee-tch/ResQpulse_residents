@@ -153,6 +153,14 @@ class _ChangeContactScreenState extends State<ChangeContactScreen> {
       setState(() {
         _busy = false;
         _error = result.error;
+        // 503 on a number: texts can't be sent right now. Say so above and
+        // turn the button off where a text is the only way (verifying the
+        // number, or no email to fall back on), instead of a red error
+        // over a button that can't work.
+        if (!_isEmail && result.statusCode == 503) {
+          _smsAvailable = false;
+          if (widget.verifyCurrent || !_hasEmail) _error = null;
+        }
       });
       final wait = result.data is Map ? result.data['retry_after'] : null;
       if (_codeStep && wait is num && wait > 0) _startTimer(wait.toInt());

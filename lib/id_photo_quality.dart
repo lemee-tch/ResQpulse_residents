@@ -4,7 +4,9 @@ import 'dart:ui' as ui;
 
 /// Checks whether a photo of an ID is clear enough to read, so a resident
 /// can retake a bad shot right away (panel revision #3) instead of being
-/// rejected by MDRRMO later.
+/// rejected by MDRRMO later. A blurry photo can't be used at all — Create
+/// Account shows only Retake Photo for it (item 52); a dark one or one with
+/// glare gets a warning.
 ///
 /// Uses only dart:ui — no extra packages. The photo is decoded small
 /// (320 px wide), turned to grayscale, and three things are measured:
@@ -63,7 +65,7 @@ class IdPhotoQuality {
 
   /// Short headline for the warning box, or null when the photo is fine.
   String? get title {
-    if (isBlurry) return 'The photo may be unclear.';
+    if (isBlurry) return 'The photo is blurry.';
     if (isTooDark) return 'The photo is too dark.';
     if (hasGlare) return 'There is glare on the ID.';
     return null;
@@ -72,7 +74,8 @@ class IdPhotoQuality {
   /// What the resident should do about it, or null when the photo is fine.
   String? get advice {
     if (isBlurry) {
-      return 'Hold your phone steady, keep the ID in focus, and try better light.';
+      return 'Hold your phone steady, keep the ID in focus, use good light, '
+          'then retake it.';
     }
     if (isTooDark) return 'Move to a brighter place and take the photo again.';
     if (hasGlare) {
@@ -82,7 +85,7 @@ class IdPhotoQuality {
   }
 
   /// Returns null if the image can't be read — callers should then let the
-  /// resident decide. The check never blocks sign-up on its own.
+  /// resident decide (only a photo found blurry is turned away).
   static Future<IdPhotoQuality?> analyze(
     File file, {
     double? frameAspect,

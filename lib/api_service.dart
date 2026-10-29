@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'push_notification.dart'; // navigatorKey, unregisterFcmToken()
+import 'phone_call.dart'; // openDialer()
 import 'home.dart'; // for HomeScreen
 
 class ApiService {
@@ -75,21 +76,159 @@ class ApiService {
     await prefs.remove('guest_name'); // saved by an earlier version
   }
 
+  /// The login [_forceGuestMode] last ended. Two calls can come back 401
+  /// for the same login (Home asks for the profile and the alerts at the
+  /// same time): only the first one opens Home, so the second doesn't
+  /// close the "Account blocked" pop-up the first one showed.
+  static String? _endedToken;
+
   /// Called whenever the server says a session is no longer valid
   /// (401 on an authenticated endpoint) — most commonly because an
   /// admin rejected/removed the account, revoking its tokens. Clears
   /// the local session and bounces the person straight to guest mode,
   /// no matter which screen they're currently on.
-  static Future<void> _forceGuestMode() async {
-    await clearSession();
-    // This phone stops getting the removed account's notifications.
-    unawaited(unregisterFcmToken());
+  ///
+  /// [notice] is MDRRMO's reason when it blocked the account (item 54,
+  /// [_blockedNotice]): shown in a pop-up over Home.
+  static Future<void> _forceGuestMode({String? notice}) async {
+    final token = await getToken();
+    // No login left: an earlier 401 already opened Home in guest mode.
+    final alreadyEnded = token == null || token == _endedToken;
+
+    if (!alreadyEnded) {
+      _endedToken = token;
+      await clearSession();
+      // This phone stops getting the removed account's notifications.
+      unawaited(unregisterFcmToken());
+      final ctx = navigatorKey.currentContext;
+      if (ctx != null) {
+        Navigator.of(ctx).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeScreen(isGuest: true)),
+          (route) => false,
+        );
+      }
+    }
+
+    if (notice != null) _showBlockedNotice('Account blocked', notice);
+  }
+
+  // ── Blocked by MDRRMO (item 54) ───────────────────────────────────
+  // MDRRMO can block a fake or prank account (admin: Residents
+  // Verification → Block). The server then refuses it with
+  // "blocked": true and the reason:
+  //  - 401 on any signed-in call, a report or an SOS — that login is
+  //    ended, and the app goes back to guest mode ([_forceGuestMode]);
+  //  - 403 on Log In, and on a guest report or SOS with that account's
+  //    mobile number.
+  // Either way the app shows the reason in a pop-up, with Call MDRRMO.
+
+  /// MDRRMO Rosales' hotline (as on the SOS screen and About).
+  static const String _mdrrmoHotline = '#2441';
+
+  static bool _blockedNoticeShowing = false;
+
+  /// MDRRMO's reason, when the reply says the account or number was
+  /// blocked ("blocked": true). Null for any other reply.
+  static String? _blockedNotice(http.Response response) {
+    try {
+      final data = jsonDecode(response.body);
+      if (data is Map && data['blocked'] == true) {
+        final message = data['message']?.toString().trim() ?? '';
+        return message.isNotEmpty
+            ? message
+            : 'This was blocked by MDRRMO. If you think this is a mistake, '
+                  'call MDRRMO Rosales.';
+      }
+    } catch (_) {
+      // Not JSON (e.g. a maintenance page): not a block.
+    }
+    return null;
+  }
+
+  /// The pop-up for [_blockedNotice]: MDRRMO's reason, the hotline, and
+  /// Call MDRRMO — the hotline still works for a blocked resident. Shown
+  /// over whatever screen is open; only one at a time.
+  static void _showBlockedNotice(String title, String message) {
     final ctx = navigatorKey.currentContext;
-    if (ctx == null) return;
-    Navigator.of(ctx).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomeScreen(isGuest: true)),
-      (route) => false,
+    if (ctx == null || _blockedNoticeShowing) return;
+    _blockedNoticeShowing = true;
+
+    const Color red = Color(0xFFD32F2F);
+
+    showDialog<void>(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.block, color: red),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message, style: const TextStyle(height: 1.4)),
+            const SizedBox(height: 12),
+            const Text(
+              'MDRRMO Rosales hotline: $_mdrrmoHotline',
+              style: TextStyle(color: Colors.black54, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('OK'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: red,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: () => openDialer(_mdrrmoHotline),
+            icon: const Icon(Icons.call, size: 18),
+            label: const Text('Call MDRRMO'),
+          ),
+        ],
+      ),
+    ).whenComplete(() => _blockedNoticeShowing = false);
+  }
+
+  /// A guest report or SOS with the mobile number of an account MDRRMO
+  /// blocked (403): the reason in a pop-up, and a short line for the
+  /// screen's own error.
+  static ApiResponse _blockedNumber(http.Response response) {
+    _showBlockedNotice('Number blocked', _blockedNotice(response)!);
+    return ApiResponse.error(
+      'This mobile number was blocked by MDRRMO.',
+      statusCode: 403,
     );
+  }
+
+  /// What a screen says when MDRRMO blocked the account — the reason is
+  /// in the pop-up.
+  static const String _blockedAccountLine =
+      'This account was blocked by MDRRMO.';
+
+  /// A 401 from a signed-in call: ends the login ([_forceGuestMode]).
+  /// Returns [_blockedAccountLine] when MDRRMO blocked the account (the
+  /// pop-up says why), or null for any other 401.
+  static Future<String?> _endLogin(http.Response response) async {
+    final blocked = _blockedNotice(response);
+    await _forceGuestMode(notice: blocked);
+    return blocked == null ? null : _blockedAccountLine;
   }
 
   // ── Headers ───────────────────────────────────────────────────────
@@ -136,6 +275,12 @@ class ApiService {
         await saveToken(data['token']);
         await saveUser(data['citizen']);
         return ApiResponse.success(data);
+      }
+
+      // MDRRMO blocked the account (item 54): the reason, in a pop-up.
+      if (response.statusCode == 403 && data['blocked'] == true) {
+        _showBlockedNotice('Account blocked', _blockedNotice(response)!);
+        return ApiResponse.error(_blockedAccountLine, statusCode: 403);
       }
 
       if (response.statusCode == 403 && data['needs_verification'] == true) {
@@ -431,9 +576,10 @@ class ApiService {
       }
       if (response.statusCode == 401) {
         // The token itself was rejected server-side — bounce to guest mode.
-        await _forceGuestMode();
+        // When MDRRMO blocked the account, a pop-up says why (item 54).
+        final blocked = await _endLogin(response);
         return ApiResponse.error(
-          'Session expired. Please log in again.',
+          blocked ?? 'Session expired. Please log in again.',
           statusCode: 401,
         );
       }
@@ -488,7 +634,10 @@ class ApiService {
         await saveUser(data['citizen']);
         return ApiResponse.success(data);
       }
-      if (response.statusCode == 401) await _forceGuestMode();
+      if (response.statusCode == 401) {
+        final blocked = await _endLogin(response);
+        if (blocked != null) return ApiResponse.error(blocked, statusCode: 401);
+      }
       if (data['errors'] != null) {
         final errors = data['errors'] as Map<String, dynamic>;
         final firstError = errors.values.first;
@@ -577,7 +726,10 @@ class ApiService {
     } catch (_) {}
 
     if (response.statusCode == 200) return ApiResponse.success(data);
-    if (response.statusCode == 401) await _forceGuestMode();
+    if (response.statusCode == 401) {
+      final blocked = await _endLogin(response);
+      if (blocked != null) return ApiResponse.error(blocked, statusCode: 401);
+    }
     return ApiResponse.error(
       data['message']?.toString() ?? fallback,
       data: data,
@@ -595,7 +747,7 @@ class ApiService {
       if (response.statusCode == 200) {
         return ApiResponse.success(jsonDecode(response.body));
       }
-      if (response.statusCode == 401) await _forceGuestMode();
+      if (response.statusCode == 401) await _endLogin(response);
       return ApiResponse.error('Could not load alerts.');
     } catch (e) {
       return ApiResponse.error(_handleError(e));
@@ -638,13 +790,17 @@ class ApiService {
 
   // ── INCIDENTS ─────────────────────────────────────────────────────
 
+  /// Report Emergency. Where it is comes from the phone's location, like
+  /// SOS: [latitude] and [longitude] are required, and the server works out
+  /// the street and barangay from them (Api\IncidentController::store()).
+  /// [location] is only sent if given — the app doesn't since item 49.
   static Future<ApiResponse> submitIncident({
     required String emergencyType,
-    required String location,
     required String description,
     required List<File> photos,
-    double? latitude,
-    double? longitude,
+    required double latitude,
+    required double longitude,
+    String? location,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/incidents');
@@ -655,12 +811,12 @@ class ApiService {
       if (token != null) request.headers['Authorization'] = 'Bearer $token';
 
       request.fields['emergency_type'] = emergencyType;
-      request.fields['location'] = location;
-      request.fields['description'] = description;
-      if (latitude != null) request.fields['latitude'] = latitude.toString();
-      if (longitude != null) {
-        request.fields['longitude'] = longitude.toString();
+      if (location != null && location.trim().isNotEmpty) {
+        request.fields['location'] = location.trim();
       }
+      request.fields['description'] = description;
+      request.fields['latitude'] = latitude.toString();
+      request.fields['longitude'] = longitude.toString();
 
       for (final photo in photos) {
         request.files.add(
@@ -679,7 +835,13 @@ class ApiService {
       if (response.statusCode == 201) {
         return ApiResponse.success(data);
       }
-      if (response.statusCode == 401) await _forceGuestMode();
+      if (response.statusCode == 401) {
+        final blocked = await _endLogin(response);
+        if (blocked != null) return ApiResponse.error(blocked, statusCode: 401);
+      }
+      if (response.statusCode == 403 && data['blocked'] == true) {
+        return _blockedNumber(response);
+      }
       if (data['errors'] != null) {
         final errors = data['errors'] as Map<String, dynamic>;
         final first = errors.values.first;
@@ -702,7 +864,7 @@ class ApiService {
       if (response.statusCode == 200) {
         return ApiResponse.success(jsonDecode(response.body));
       }
-      if (response.statusCode == 401) await _forceGuestMode();
+      if (response.statusCode == 401) await _endLogin(response);
       return ApiResponse.error('Could not load reports.');
     } catch (e) {
       return ApiResponse.error(_handleError(e));
@@ -766,7 +928,13 @@ class ApiService {
       if (response.statusCode == 201) {
         return ApiResponse.success(data);
       }
-      if (response.statusCode == 401) await _forceGuestMode();
+      if (response.statusCode == 401) {
+        final blocked = await _endLogin(response);
+        if (blocked != null) return ApiResponse.error(blocked, statusCode: 401);
+      }
+      if (response.statusCode == 403 && data['blocked'] == true) {
+        return _blockedNumber(response);
+      }
       if (data['errors'] != null) {
         final errors = data['errors'] as Map<String, dynamic>;
         final first = errors.values.first;
@@ -820,9 +988,10 @@ class ApiResponse {
   final dynamic data;
   final String? error;
 
-  /// On an error: the server's HTTP status, when it was given (so far only
-  /// getMe() sets it — 401 means the login was rejected). Null when the
-  /// server couldn't be reached (no internet, timeout).
+  /// On an error: the server's HTTP status, when it was given — 401 means
+  /// the login was rejected (getMe() and others), 403 from Log In, a
+  /// report or an SOS means MDRRMO blocked the account or number. Null
+  /// when the server couldn't be reached (no internet, timeout).
   final int? statusCode;
 
   ApiResponse._({

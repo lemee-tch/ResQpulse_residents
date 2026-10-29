@@ -16,8 +16,10 @@ import 'home.dart';
 ///   Step 1  Personal Information   name, municipality, barangay, street, zone
 ///   Step 2  Proof of Residency     take a photo of a valid ID inside an
 ///                                  on-screen frame. Every photo is checked
-///                                  for blur, darkness and glare, and the
-///                                  resident chooses Retake Photo or Use Photo.
+///                                  for blur, darkness and glare. A blurry
+///                                  photo can only be retaken (no Use Photo,
+///                                  item 52); otherwise the resident chooses
+///                                  Retake Photo or Use Photo.
 ///   Step 3  Account                "Verify using one:" Email or Mobile
 ///                                  Number, then the contact details,
 ///                                  password, and the 6-digit code.
@@ -106,6 +108,14 @@ class _RegisterScreenState extends State<RegisterScreen>
   bool _reviewFromGallery = false;
   bool _checkingPhoto = false;
   IdPhotoQuality? _photoQuality;
+
+  /// The check found the photo being reviewed blurry. It can't be used —
+  /// "Use Photo" isn't shown, only Retake Photo (item 52). A dark photo or
+  /// one with glare only gets a warning.
+  bool get _reviewIsBlurry =>
+      _reviewPhoto != null &&
+      !_checkingPhoto &&
+      _photoQuality?.isBlurry == true;
 
   // The photo the resident chose to use — this is what gets uploaded.
   File? _uploadedFile;
@@ -347,7 +357,11 @@ class _RegisterScreenState extends State<RegisterScreen>
 
     if (_step == 1) {
       if (_reviewPhoto != null) {
-        _showError('Tap "Use Photo" to keep this photo, or retake it.');
+        _showError(
+          _reviewIsBlurry
+              ? 'This photo is blurry. Retake it to continue.'
+              : 'Tap "Use Photo" to keep this photo, or retake it.',
+        );
         return;
       }
       if (_uploadedFile == null) {
@@ -496,7 +510,8 @@ class _RegisterScreenState extends State<RegisterScreen>
   }
 
   /// Shows the new photo and checks it for blur, darkness and glare
-  /// (panel revision #3). The check only warns — the resident decides.
+  /// (panel revision #3). A blurry photo can't be used, only retaken
+  /// (item 52); darkness and glare only warn — the resident decides.
   Future<void> _reviewNewPhoto(File file, {required bool fromGallery}) async {
     setState(() {
       _reviewPhoto = file;
@@ -536,10 +551,11 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
   }
 
-  /// "Use Photo" — keeps the photo and moves on to the Account step.
+  /// "Use Photo" — keeps the photo and moves on to the Account step. Not
+  /// for a blurry photo (the button isn't shown then).
   void _usePhoto() {
     final File? file = _reviewPhoto;
-    if (file == null) return;
+    if (file == null || _checkingPhoto || _reviewIsBlurry) return;
     setState(() {
       _uploadedFile = file;
       _acceptedFromGallery = _reviewFromGallery;
@@ -1235,6 +1251,26 @@ class _RegisterScreenState extends State<RegisterScreen>
   List<Widget> _buildIdPhotoControls() {
     // Reviewing a new photo: the check result + Retake Photo / Use Photo.
     if (_reviewPhoto != null) {
+      final String retakeLabel = _reviewFromGallery
+          ? 'CHOOSE ANOTHER'
+          : 'RETAKE PHOTO';
+      final IconData retakeIcon = _reviewFromGallery
+          ? Icons.photo_library_outlined
+          : Icons.camera_alt_outlined;
+
+      // A blurry photo can't be used (item 52): no Use Photo, only Retake.
+      if (_reviewIsBlurry) {
+        return [
+          _buildPhotoCheckResult(),
+          const SizedBox(height: 14),
+          _primaryButton(
+            label: retakeLabel,
+            icon: retakeIcon,
+            onPressed: _retakePhoto,
+          ),
+        ];
+      }
+
       return [
         _buildPhotoCheckResult(),
         const SizedBox(height: 14),
@@ -1242,10 +1278,8 @@ class _RegisterScreenState extends State<RegisterScreen>
           children: [
             Expanded(
               child: _secondaryButton(
-                label: _reviewFromGallery ? 'CHOOSE ANOTHER' : 'RETAKE PHOTO',
-                icon: _reviewFromGallery
-                    ? Icons.photo_library_outlined
-                    : Icons.camera_alt_outlined,
+                label: retakeLabel,
+                icon: retakeIcon,
                 onPressed: _retakePhoto,
               ),
             ),
@@ -1327,6 +1361,59 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
 
     final IdPhotoQuality? quality = _photoQuality;
+
+    // Blurry: it can't be used, so it's red, not a warning (item 52).
+    if (quality != null && quality.isBlurry) {
+      final String fix = _reviewFromGallery
+          ? 'Choose a clearer photo, or take one with the camera.'
+          : (quality.advice ?? '');
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFDECEA),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFF1A7A0)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              Icons.blur_on_rounded,
+              color: Color(0xFFC62828),
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    quality.title ?? 'The photo is blurry.',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13.5,
+                      color: Color(0xFF7F1D1D),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'MDRRMO has to read your name and address, so a blurry '
+                    'photo can\'t be used. $fix',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      color: Color(0xFF991B1B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (quality != null && !quality.isClear) {
       return Container(
         width: double.infinity,

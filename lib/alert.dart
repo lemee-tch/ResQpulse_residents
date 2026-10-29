@@ -16,7 +16,7 @@ class AlertsScreen extends StatefulWidget {
 
 /// Clearing past alerts (panel comment #22):
 ///  - by themselves: the server stops sending an alert when its time is up
-///    (MDRRMO picks 1 to 30 days when sending) or when MDRRMO clears it;
+///    (24 hours after it's sent — item 50) or when MDRRMO clears it;
 ///  - on this phone: swipe an alert away, or "Clear all" — with Undo. The
 ///    cleared ids are kept on the phone (ClearedAlerts).
 class _AlertsScreenState extends State<AlertsScreen> {

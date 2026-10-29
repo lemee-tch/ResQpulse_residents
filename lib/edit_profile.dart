@@ -236,6 +236,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
       ),
     );
+    // Texting may have turned out to be unavailable: "Verify now" only
+    // shows while it works.
+    if (mounted) _checkSms();
     if (result == null || !mounted) return;
 
     final updated = result['citizen'];

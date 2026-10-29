@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -7,6 +8,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
 
+/// Home → Report Emergency: the type, what happened, photos — and where,
+/// which is the phone's own location, the same as SOS (item 49). There is
+/// no barangay search anymore: the location is looked for as soon as the
+/// screen opens (_primeLocation), shown at the Location field
+/// (_buildLocationCard) with a button to fix it when location is off or
+/// not allowed, and found again when the report is sent (_positionForSend).
+/// The server turns the pin into the street and barangay
+/// (Api\IncidentController::store()).
 class ReportIncidentScreen extends StatefulWidget {
   final bool isGuest;
   const ReportIncidentScreen({super.key, this.isGuest = false});
@@ -15,9 +24,11 @@ class ReportIncidentScreen extends StatefulWidget {
   State<ReportIncidentScreen> createState() => _ReportIncidentScreenState();
 }
 
-enum _LocationSource { none, gps, barangayLookup, error }
+class _ReportIncidentScreenState extends State<ReportIncidentScreen>
+    with WidgetsBindingObserver {
+  static const Color _green = Color(0xFF2E7D32);
+  static const Color _red = Color(0xFFD32F2F);
 
-class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
   // Guests only need to send a location pin — photos and a written
   // description are optional for them (they can still add photos if they
   // want to, up to the same max). Logged-in citizens keep the original
@@ -34,113 +45,25 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
   final List<File> _pickedImages = [];
   bool _isLoading = false;
 
-  // ── Coordinates that actually get submitted with the report ─────────
-  double? _latitude;
-  double? _longitude;
-  _LocationSource _locationSource = _LocationSource.none;
-  String? _locationStatusMessage;
-  bool _isResolvingLocation = false;
+  // ── Location: the phone's GPS, like SOS ─────────────────────────────
+  static const String _finding = 'Finding your location…';
+  bool _locating = false; // _primeLocation() is running
+  bool _locationReady = false;
+  String _locationStatus = _finding;
 
-  // ── Location dropdown/autocomplete state ───────────────────────────
-  TextEditingController? _locationFieldController;
+  /// Location is off or not allowed: what's wrong, and how to fix it
+  /// ('location_settings', 'app_settings' or 'ask').
+  String? _locationError;
+  String? _locationFix;
 
-  static const String _currentLocationOption = '📍 Use My Current Location';
+  /// The location found when this screen opened (or the latest one since).
+  /// Sending uses it when a fresh GPS fix takes too long — see
+  /// _positionForSend().
+  Position? _lastPosition;
 
-  // Verified barangay centroid coordinates — computed from official PSGC
-  // boundary polygons (Philippine Statistics Authority), not from live
-  // text-search geocoding. Every barangay below has a real, accurate pin;
-  // there is no "couldn't pinpoint" fallback path anymore because nothing
-  // in this table can fail to resolve.
-  static const Map<String, _LatLng> _barangayCoordinates = {
-    'Acop': _LatLng(15.867531, 120.652154),
-    'Bakitbakit': _LatLng(15.878026, 120.650273),
-    'Balingcanaway': _LatLng(15.892046, 120.651996),
-    'Cabalaoangan Norte': _LatLng(15.884509, 120.626134),
-    'Cabalaoangan Sur': _LatLng(15.876132, 120.633595),
-    'Calanutan': _LatLng(15.864204, 120.633487),
-    'Camangaan': _LatLng(15.849665, 120.635914),
-    'Capitan Tomas': _LatLng(15.908782, 120.644112),
-    'Carmay East': _LatLng(15.914305, 120.637743),
-    'Carmay West': _LatLng(15.911984, 120.625233),
-    'Carmen East': _LatLng(15.891492, 120.601517),
-    'Carmen West': _LatLng(15.888648, 120.594245),
-    'Casanicolasan': _LatLng(15.924801, 120.642405),
-    'Coliling': _LatLng(15.854561, 120.620069),
-    'Don Antonio Village': _LatLng(15.899285, 120.621318),
-    'Guiling': _LatLng(15.849206, 120.621911),
-    'Palakipak': _LatLng(15.862663, 120.617815),
-    'Pangaoan': _LatLng(15.838011, 120.641362),
-    'Rabago': _LatLng(15.856993, 120.634730),
-    'Rizal': _LatLng(15.923404, 120.630220),
-    'Salvacion': _LatLng(15.846088, 120.659706),
-    'San Angel': _LatLng(15.860160, 120.656112),
-    'San Antonio': _LatLng(15.853902, 120.658100),
-    'San Bartolome': _LatLng(15.875859, 120.611195),
-    'San Isidro': _LatLng(15.838424, 120.623979),
-    'San Luis': _LatLng(15.842845, 120.650298),
-    'San Pedro East': _LatLng(15.896897, 120.645530),
-    'San Pedro West': _LatLng(15.896184, 120.636969),
-    'San Vicente': _LatLng(15.847728, 120.671759),
-    'Station District': _LatLng(15.892017, 120.620915),
-    'Tomana East': _LatLng(15.895439, 120.613376),
-    'Tomana West': _LatLng(15.892375, 120.608154),
-    'Zone I (Poblacion)': _LatLng(15.888483, 120.623073),
-    'Zone II (Poblacion)': _LatLng(15.897089, 120.629352),
-    'Zone III (Poblacion)': _LatLng(15.904627, 120.621300),
-    'Zone IV (Poblacion)': _LatLng(15.904928, 120.629206),
-    'Zone V (Poblacion)': _LatLng(15.890244, 120.629699),
-  };
-
-  static const List<String> _barangays = [
-    'Acop',
-    'Bakitbakit',
-    'Balingcanaway',
-    'Cabalaoangan Norte',
-    'Cabalaoangan Sur',
-    'Calanutan',
-    'Camangaan',
-    'Capitan Tomas',
-    'Carmay East',
-    'Carmay West',
-    'Carmen East',
-    'Carmen West',
-    'Casanicolasan',
-    'Coliling',
-    'Don Antonio Village',
-    'Guiling',
-    'Palakipak',
-    'Pangaoan',
-    'Rabago',
-    'Rizal',
-    'Salvacion',
-    'San Angel',
-    'San Antonio',
-    'San Bartolome',
-    'San Isidro',
-    'San Luis',
-    'San Pedro East',
-    'San Pedro West',
-    'San Vicente',
-    'Station District',
-    'Tomana East',
-    'Tomana West',
-    'Zone I (Poblacion)',
-    'Zone II (Poblacion)',
-    'Zone III (Poblacion)',
-    'Zone IV (Poblacion)',
-    'Zone V (Poblacion)',
-  ];
-
-  // Flat, searchable list of barangay-only options. Street/zone combos were
-  // removed — Nominatim can't reliably geocode a "barangay + street + zone"
-  // string down to real coordinates (see _resolveCoordinatesForSelection),
-  // so only offering barangay-level choices guarantees every dropdown pick
-  // resolves to an accurate pin instead of falling back to a generic point.
-  static final List<String> _locationOptions = _buildLocationOptions();
-
-  static List<String> _buildLocationOptions() {
-    return _barangays.map((barangay) => 'Rosales, $barangay').toList();
-  }
+  /// Roughly where that is ("Rizal St, Zone II, Rosales"), so the resident
+  /// can see it's right. Only shown; the server works out the place itself.
+  String? _nearText;
 
   final List<String> _emergencyTypes = [
     'Fire',
@@ -153,82 +76,187 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _primeLocation();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _descriptionController.dispose();
     _otherEmergencyController.dispose();
-    // Note: _locationFieldController is owned/disposed internally by the
-    // Autocomplete widget — do NOT dispose it here.
     super.dispose();
   }
 
-  // ── GPS: used only when the person picks "Use My Current Location" ──
-  Future<void> _fillCurrentLocationAddress() async {
-    setState(() {
-      _isResolvingLocation = true;
-      _locationSource = _LocationSource.none;
-    });
-
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _setLocationError('Location services are off. Please enable GPS.');
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          _setLocationError('Location permission denied.');
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        _setLocationError(
-          'Location permission permanently denied. Enable it in app settings.',
-        );
-        return;
-      }
-
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      ).timeout(const Duration(seconds: 15));
-
-      if (!mounted) return;
-
-      _latitude = position.latitude;
-      _longitude = position.longitude;
-
-      // Reverse-geocode into a readable address for the text field.
-      final address = await _reverseGeocode(
-        position.latitude,
-        position.longitude,
-      );
-      _locationFieldController?.text =
-          address ??
-          'Current Location (${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)})';
-
-      setState(() {
-        _locationSource = _LocationSource.gps;
-        _locationStatusMessage =
-            'Using your current GPS location (${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)})';
-        _isResolvingLocation = false;
-      });
-    } catch (e) {
-      _setLocationError('Could not get your location. Please try again.');
+  /// Coming back to the app (e.g. after turning location on in the
+  /// phone's settings) looks for the location again.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_locationReady && !_isLoading) {
+      _primeLocation();
     }
   }
 
-  void _setLocationError(String message) {
+  // ── Location ──────────────────────────────────────────────────────
+
+  /// Finds the location as soon as the screen opens, so it's ready by the
+  /// time the resident sends the report. Waits at most 20 seconds, then
+  /// uses the phone's last known location if there is one.
+  Future<void> _primeLocation() async {
+    if (_locating) return;
+    _locating = true;
+    // Trying again (after "Allow" / "Turn on", or coming back to the app).
+    if (mounted && (_locationError != null || _locationStatus != _finding)) {
+      setState(() {
+        _locationError = null;
+        _locationFix = null;
+        _locationStatus = _finding;
+      });
+    }
+    try {
+      final position = await _getCurrentLocation().timeout(
+        const Duration(seconds: 20),
+      );
+      _found(position);
+    } on TimeoutException {
+      final known = await _lastKnownPosition();
+      if (!mounted) return;
+      if (known != null) {
+        _found(known);
+      } else {
+        setState(
+          () => _locationStatus =
+              'Still looking for your location — it tries again when you '
+              'send.',
+        );
+      }
+    } on _LocationProblem catch (p) {
+      if (!mounted) return;
+      setState(() {
+        _locationError = p.message;
+        _locationFix = p.fix;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(
+        () => _locationStatus =
+            'Still looking for your location — it tries again when you send.',
+      );
+    } finally {
+      _locating = false;
+    }
+  }
+
+  /// The location is ready; roughly where it is is looked up for the
+  /// Location field.
+  void _found(Position position) {
+    _lastPosition = position;
     if (!mounted) return;
     setState(() {
-      _locationSource = _LocationSource.error;
-      _locationStatusMessage = message;
-      _isResolvingLocation = false;
+      _locationReady = true;
+      _locationStatus = 'Location ready';
+    });
+    _reverseGeocode(position.latitude, position.longitude).then((near) {
+      if (mounted && near != null && _lastPosition == position) {
+        setState(() => _nearText = near);
+      }
     });
   }
 
+  /// "Turn on" / "Allow" on the Location field.
+  Future<void> _fixLocation() async {
+    switch (_locationFix) {
+      case 'location_settings':
+        await Geolocator.openLocationSettings();
+        break; // looked for again when the resident comes back
+      case 'app_settings':
+        await Geolocator.openAppSettings();
+        break;
+      default:
+        await _primeLocation(); // asks for the permission again
+    }
+  }
+
+  Future<Position?> _lastKnownPosition() async {
+    try {
+      return await Geolocator.getLastKnownPosition();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The location sent with the report: a fresh GPS fix if the phone gets
+  /// one within 10 seconds, otherwise the one found when the screen
+  /// opened, otherwise the phone's last known location.
+  Future<Position> _positionForSend() async {
+    Object? problem;
+    try {
+      final fresh = await _getCurrentLocation().timeout(
+        const Duration(seconds: 10),
+      );
+      _lastPosition = fresh;
+      return fresh;
+    } catch (e) {
+      problem = e;
+    }
+
+    final fallback = _lastPosition ?? await _lastKnownPosition();
+    if (fallback != null) return fallback;
+
+    // Location off / not allowed come with their own message, shown at
+    // the Location field too.
+    if (problem is _LocationProblem) {
+      final p = problem;
+      if (mounted) {
+        setState(() {
+          _locationError = p.message;
+          _locationFix = p.fix;
+        });
+      }
+      throw p.message;
+    }
+    throw 'We couldn\'t find your location. Move near a window or outside '
+        'and try again, or call MDRRMO.';
+  }
+
+  Future<Position> _getCurrentLocation() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw const _LocationProblem(
+        'Your phone\'s location is off. Turn it on so MDRRMO can find the '
+            'emergency.',
+        'location_settings',
+      );
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        throw const _LocationProblem(
+          'ResQPulse isn\'t allowed to use your location. Allow it so '
+              'MDRRMO can find the emergency.',
+          'ask',
+        );
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+      throw const _LocationProblem(
+        'ResQPulse isn\'t allowed to use your location. Allow it in your '
+            'phone\'s settings so MDRRMO can find the emergency.',
+        'app_settings',
+      );
+    }
+
+    return Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+  }
+
+  /// Roughly where a pin is, from OpenStreetMap ("Rizal St, Zone II,
+  /// Rosales"). Null if it can't be found — the report is sent either way.
   Future<String?> _reverseGeocode(double lat, double lng) async {
     try {
       final uri = Uri.parse(
@@ -260,51 +288,6 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
           : data['display_name']?.toString();
     } catch (_) {
       return null;
-    }
-  }
-
-  // ── Resolve a selected barangay to its pin using the static, verified
-  // coordinate table — no network call, no chance of a bad match, and no
-  // "couldn't pinpoint" fallback, since every barangay in the dropdown
-  // has a known-accurate coordinate. ────────────────────────────────
-  Future<void> _resolveCoordinatesForSelection(String selection) async {
-    setState(() {
-      _isResolvingLocation = true;
-      _locationSource = _LocationSource.none;
-    });
-
-    final parts = selection.split(',').map((p) => p.trim()).toList();
-    final candidate = parts.length >= 2 ? parts[1] : selection.trim();
-
-    // Case-insensitive match against the verified table — covers both a
-    // dropdown pick ("Rosales, Acop") and free-typed text ("acop").
-    final matchKey = _barangayCoordinates.keys.firstWhere(
-      (key) => key.toLowerCase() == candidate.toLowerCase(),
-      orElse: () => '',
-    );
-    final barangay = matchKey.isNotEmpty ? matchKey : candidate;
-    final coords = _barangayCoordinates[matchKey];
-
-    if (!mounted) return;
-
-    if (coords != null) {
-      setState(() {
-        _latitude = coords.lat;
-        _longitude = coords.lng;
-        _locationSource = _LocationSource.barangayLookup;
-        _locationStatusMessage =
-            'Pinned at Brgy. $barangay (${coords.lat.toStringAsFixed(5)}, ${coords.lng.toStringAsFixed(5)})';
-        _isResolvingLocation = false;
-      });
-    } else {
-      // Should never happen — the dropdown only offers barangays that
-      // exist in _barangayCoordinates — but guard against it anyway.
-      setState(() {
-        _locationSource = _LocationSource.error;
-        _locationStatusMessage =
-            'Unrecognized barangay. Please pick one from the list.';
-        _isResolvingLocation = false;
-      });
     }
   }
 
@@ -465,7 +448,32 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
     );
   }
 
+  /// The location for the report, or null after saying what's wrong.
+  Future<Position?> _positionOrExplain() async {
+    try {
+      final position = await _positionForSend();
+      if (mounted && !_locationReady) {
+        setState(() {
+          _locationReady = true;
+          _locationStatus = 'Location ready';
+          _locationError = null;
+        });
+      }
+      return position;
+    } catch (e) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return null;
+    }
+  }
+
   void _handleSubmit() async {
+    if (_isLoading) return;
     if (!_formKey.currentState!.validate()) return;
 
     if (_pickedImages.length < _minPhotos) {
@@ -480,40 +488,27 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
       return;
     }
 
-    final locationText = _locationFieldController?.text.trim() ?? '';
-
-    // Safety net: if the person typed a location manually and never
-    // selected a suggestion (so we never geocoded it), try once more
-    // right before submitting so the report still gets a map pin.
-    if (_latitude == null && locationText.isNotEmpty) {
-      await _resolveCoordinatesForSelection(locationText);
-    }
-
-    // Guests are only required to have a location pin (from GPS or a
-    // barangay pick) — everything else on the form is optional for them.
-    if (widget.isGuest && _latitude == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please share your location so MDRRMO can find you.'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
     final resolvedEmergencyType = _selectedEmergency == 'Other'
         ? _otherEmergencyController.text.trim()
         : _selectedEmergency;
 
     setState(() => _isLoading = true);
 
+    // The phone's location, like SOS: a fresh fix if it comes quickly,
+    // otherwise the one found when the screen opened.
+    final position = await _positionOrExplain();
+    if (!mounted) return;
+    if (position == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
+
     final result = await ApiService.submitIncident(
       emergencyType: resolvedEmergencyType,
-      location: locationText,
       description: _descriptionController.text.trim(),
       photos: _pickedImages,
-      latitude: _latitude,
-      longitude: _longitude,
+      latitude: position.latitude,
+      longitude: position.longitude,
     );
 
     if (!mounted) return;
@@ -723,226 +718,20 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
 
                 const SizedBox(height: 20),
 
-                // ── Location ────────────────────────────────────────
+                // ── Location: the phone's own, like SOS (item 49) ────
                 _fieldLabel('Location'),
                 const SizedBox(height: 8),
-
-                // Unified status banner — reflects whichever source last
-                // set the coordinates: GPS, barangay lookup, or an error.
-                if (_locationSource != _LocationSource.none ||
-                    _isResolvingLocation)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _locationSource == _LocationSource.error
-                          ? Colors.red[50]
-                          : (_locationSource != _LocationSource.none
-                                ? const Color(0xFFE8F5E9)
-                                : Colors.grey[100]),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        if (_isResolvingLocation)
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        else
-                          Icon(
-                            _locationSource == _LocationSource.error
-                                ? Icons.error_outline
-                                : (_locationSource == _LocationSource.gps
-                                      ? Icons.gps_fixed
-                                      : Icons.location_on),
-                            size: 18,
-                            color: _locationSource == _LocationSource.error
-                                ? Colors.red
-                                : const Color(0xFF2E7D32),
-                          ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _isResolvingLocation
-                                ? 'Finding coordinates...'
-                                : (_locationStatusMessage ?? ''),
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              color: _locationSource == _LocationSource.error
-                                  ? Colors.red[700]
-                                  : Colors.grey[700],
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                _buildLocationCard(),
+                const SizedBox(height: 6),
+                Text(
+                  'Your phone\'s location is sent with the report, the same as '
+                  'SOS. If you\'re not at the emergency, say where it is in '
+                  'the description.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[500],
+                    height: 1.4,
                   ),
-
-                // Searchable location dropdown (barangay + street + zone)
-                Autocomplete<String>(
-                  optionsBuilder: (TextEditingValue textEditingValue) {
-                    final query = textEditingValue.text.trim().toLowerCase();
-                    if (query.isEmpty) {
-                      return const [_currentLocationOption];
-                    }
-                    final filtered = _locationOptions
-                        .where((opt) => opt.toLowerCase().contains(query))
-                        .take(50)
-                        .toList();
-                    return [_currentLocationOption, ...filtered];
-                  },
-                  onSelected: (String selection) async {
-                    if (selection == _currentLocationOption) {
-                      _locationFieldController?.text =
-                          'Fetching your location...';
-                      await _fillCurrentLocationAddress();
-                    } else {
-                      _locationFieldController?.text = selection;
-                      await _resolveCoordinatesForSelection(selection);
-                    }
-                  },
-                  fieldViewBuilder:
-                      (context, controller, focusNode, onFieldSubmitted) {
-                        _locationFieldController = controller;
-                        return TextFormField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          onFieldSubmitted: (_) => onFieldSubmitted(),
-                          style: const TextStyle(
-                            fontSize: 15,
-                            color: Color(0xFF1A1A2E),
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Search or select your barangay...',
-                            hintStyle: TextStyle(
-                              color: Colors.grey[400],
-                              fontSize: 13.5,
-                            ),
-                            suffixIcon: _isResolvingLocation
-                                ? const Padding(
-                                    padding: EdgeInsets.all(14),
-                                    child: SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.location_on_outlined,
-                                    color: Color(0xFF1A3A8F),
-                                    size: 22,
-                                  ),
-                            filled: true,
-                            fillColor: Colors.white,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 15,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Colors.grey[300]!,
-                                width: 1.5,
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Colors.grey[300]!,
-                                width: 1.5,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(
-                                color: Color(0xFF1A3A8F),
-                                width: 2,
-                              ),
-                            ),
-                            errorBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(
-                                color: Colors.redAccent,
-                                width: 1.5,
-                              ),
-                            ),
-                            focusedErrorBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(
-                                color: Colors.redAccent,
-                                width: 2,
-                              ),
-                            ),
-                          ),
-                          validator: (v) {
-                            // Guests can rely on GPS/barangay pick alone;
-                            // the coordinate check happens in
-                            // _handleSubmit(). Logged-in citizens keep the
-                            // original "must type/select something" rule.
-                            if (widget.isGuest) return null;
-                            return (v == null || v.trim().isEmpty)
-                                ? 'Please select or enter the location'
-                                : null;
-                          },
-                        );
-                      },
-                  optionsViewBuilder: (context, onSelected, options) {
-                    final optionsList = options.toList();
-                    return Align(
-                      alignment: Alignment.topLeft,
-                      child: Material(
-                        elevation: 4,
-                        borderRadius: BorderRadius.circular(12),
-                        child: SizedBox(
-                          width: MediaQuery.of(context).size.width - 44,
-                          height: optionsList.length > 5 ? 260 : null,
-                          child: ListView.builder(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            shrinkWrap: optionsList.length <= 5,
-                            itemCount: optionsList.length,
-                            itemBuilder: (context, index) {
-                              final option = optionsList[index];
-                              final isCurrentLocation =
-                                  option == _currentLocationOption;
-                              return ListTile(
-                                dense: true,
-                                leading: Icon(
-                                  isCurrentLocation
-                                      ? Icons.my_location
-                                      : Icons.location_on_outlined,
-                                  color: isCurrentLocation
-                                      ? const Color(0xFF1A3A8F)
-                                      : Colors.grey[500],
-                                  size: 20,
-                                ),
-                                title: Text(
-                                  option,
-                                  style: TextStyle(
-                                    fontSize: 13.5,
-                                    fontWeight: isCurrentLocation
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                    color: isCurrentLocation
-                                        ? const Color(0xFF1A3A8F)
-                                        : const Color(0xFF1A1A2E),
-                                  ),
-                                ),
-                                onTap: () => onSelected(option),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
                 ),
 
                 const SizedBox(height: 20),
@@ -1200,6 +989,89 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
     );
   }
 
+  /// Whether the location is ready, with roughly where it is — or what's
+  /// wrong and a button to fix it ("Turn on" / "Allow"), like on SOS.
+  Widget _buildLocationCard() {
+    final bool problem = _locationError != null;
+    final Color color = problem
+        ? _red
+        : (_locationReady ? _green : const Color(0xFF6B7280));
+    final Color bg = problem
+        ? const Color(0xFFFFEBEE)
+        : (_locationReady ? const Color(0xFFE8F5E9) : const Color(0xFFF5F6FA));
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(14, 12, problem ? 6 : 14, 12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          if (!problem && !_locationReady && _locating)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+            )
+          else
+            Icon(
+              problem
+                  ? Icons.location_off
+                  : (_locationReady
+                        ? Icons.my_location
+                        : Icons.location_searching),
+              color: color,
+              size: 20,
+            ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  problem
+                      ? _locationError!
+                      : (_locationReady
+                            ? 'Location ready — MDRRMO can find you.'
+                            : _locationStatus),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                    height: 1.35,
+                  ),
+                ),
+                if (!problem && _locationReady && _nearText != null) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    'Near $_nearText',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: Colors.grey[700],
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (problem)
+            TextButton(
+              onPressed: _fixLocation,
+              style: TextButton.styleFrom(foregroundColor: _red),
+              child: Text(
+                _locationFix == 'location_settings' ? 'Turn on' : 'Allow',
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _fieldLabel(String label) {
     return Text(
       label,
@@ -1212,8 +1084,13 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
   }
 }
 
-class _LatLng {
-  final double lat;
-  final double lng;
-  const _LatLng(this.lat, this.lng);
+/// Location is off or not allowed: the message to show, and how to fix it
+/// ('location_settings', 'app_settings' or 'ask'). Same as on SOS.
+class _LocationProblem implements Exception {
+  final String message;
+  final String fix;
+  const _LocationProblem(this.message, this.fix);
+
+  @override
+  String toString() => message;
 }

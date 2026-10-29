@@ -70,8 +70,8 @@ class _EmergencyHotlinesScreenState extends State<EmergencyHotlinesScreen> {
   ];
 
   // ── Per-barangay hotlines ─────────────────────────────────────────────
-  // Key MUST exactly match the barangay strings used in register.dart /
-  // report_incident.dart (_barangays list) so the lookup below works.
+  // Key MUST exactly match the barangay strings used in register.dart
+  // (the resident's barangay) so the lookup below works.
   //
   // TODO(MDRRMO): replace these placeholder numbers with the real contact
   // number for each Barangay Hall / Barangay Tanod / Barangay Captain.
