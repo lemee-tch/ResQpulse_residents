@@ -155,27 +155,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     return '${(meters / 1000).toStringAsFixed(1)} km';
   }
 
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'full':
-        return const Color(0xFFD32F2F);
-      case 'closed':
-        return Colors.grey;
-      default:
-        return const Color(0xFF2E7D32);
-    }
-  }
-
-  String _statusLabel(String status) {
-    switch (status) {
-      case 'full':
-        return 'Full';
-      case 'closed':
-        return 'Closed';
-      default:
-        return 'Open';
-    }
-  }
+  /// Evacuation centers are always open (item 58), so only a full one is
+  /// marked — red pin and a "Full" tag. The rest have green pins.
+  static const Color _fullRed = Color(0xFFD32F2F);
+  static const Color _pinGreen = Color(0xFF2E7D32);
 
   @override
   Widget build(BuildContext context) {
@@ -271,7 +254,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                                 Icons.location_pin,
                                 color: isSelected
                                     ? const Color(0xFF1A3A8F)
-                                    : _statusColor(center.status),
+                                    : (center.isFull ? _fullRed : _pinGreen),
                                 size: isSelected ? 40 : 32,
                               ),
                             ),
@@ -506,29 +489,29 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                                               ),
                                             ),
                                           ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 3,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: _statusColor(
-                                                center.status,
-                                              ).withOpacity(0.12),
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                            ),
-                                            child: Text(
-                                              _statusLabel(center.status),
-                                              style: TextStyle(
-                                                fontSize: 10.5,
-                                                fontWeight: FontWeight.bold,
-                                                color: _statusColor(
-                                                  center.status,
+                                          if (center.isFull)
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 3,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: _fullRed.withOpacity(
+                                                  0.12,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                              ),
+                                              child: const Text(
+                                                'Full',
+                                                style: TextStyle(
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: _fullRed,
                                                 ),
                                               ),
                                             ),
-                                          ),
                                         ],
                                       ),
                                       const SizedBox(height: 2),
@@ -594,6 +577,9 @@ class _EvacCenter {
   });
 
   LatLng get location => LatLng(latitude, longitude);
+
+  /// MSWD marked it full: it can't take more evacuees for now.
+  bool get isFull => status == 'full';
 
   factory _EvacCenter.fromJson(Map<String, dynamic> json) {
     return _EvacCenter(

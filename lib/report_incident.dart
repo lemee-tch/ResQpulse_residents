@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
+import 'gps_fix.dart';
 
 /// Home → Report Emergency: the type, what happened, photos — and where,
 /// which is the phone's own location, the same as SOS (item 49). There is
@@ -28,6 +29,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
     with WidgetsBindingObserver {
   static const Color _green = Color(0xFF2E7D32);
   static const Color _red = Color(0xFFD32F2F);
+  static const Color _amber = Color(0xFFB45309);
 
   // Guests only need to send a location pin — photos and a written
   // description are optional for them (they can still add photos if they
@@ -40,6 +42,10 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
   final _formKey = GlobalKey<FormState>();
   final _descriptionController = TextEditingController();
   final _otherEmergencyController = TextEditingController();
+
+  /// Item 59: something near the spot that helps responders find it
+  /// ("beside the chapel, blue gate"). Optional.
+  final _landmarkController = TextEditingController();
 
   String _selectedEmergency = 'Fire';
   final List<File> _pickedImages = [];
@@ -60,6 +66,10 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
   /// Sending uses it when a fresh GPS fix takes too long — see
   /// _positionForSend().
   Position? _lastPosition;
+
+  /// _lastPosition is the phone's last known location, not a new fix —
+  /// the phone couldn't get one (item 59).
+  bool _fromLastKnown = false;
 
   /// Roughly where that is ("Rizal St, Zone II, Rosales"), so the resident
   /// can see it's right. Only shown; the server works out the place itself.
@@ -87,6 +97,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
     WidgetsBinding.instance.removeObserver(this);
     _descriptionController.dispose();
     _otherEmergencyController.dispose();
+    _landmarkController.dispose();
     super.dispose();
   }
 
@@ -116,15 +127,15 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
       });
     }
     try {
-      final position = await _getCurrentLocation().timeout(
-        const Duration(seconds: 20),
-      );
+      final position = await _getCurrentLocation(
+        limit: const Duration(seconds: 18),
+      ).timeout(const Duration(seconds: 20));
       _found(position);
     } on TimeoutException {
       final known = await _lastKnownPosition();
       if (!mounted) return;
       if (known != null) {
-        _found(known);
+        _found(known, lastKnown: true);
       } else {
         setState(
           () => _locationStatus =
@@ -151,8 +162,9 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
 
   /// The location is ready; roughly where it is is looked up for the
   /// Location field.
-  void _found(Position position) {
+  void _found(Position position, {bool lastKnown = false}) {
     _lastPosition = position;
+    _fromLastKnown = lastKnown;
     if (!mounted) return;
     setState(() {
       _locationReady = true;
@@ -187,17 +199,37 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
     }
   }
 
-  /// The location sent with the report: a fresh GPS fix if the phone gets
-  /// one within 10 seconds, otherwise the one found when the screen
-  /// opened, otherwise the phone's last known location.
+  /// The location sent with the report: the one found when the screen
+  /// opened if it's under a minute old and within 20 m; otherwise the most
+  /// precise fresh GPS fix the phone gets within 10 seconds (item 59);
+  /// otherwise the one found when the screen opened, otherwise the phone's
+  /// last known location.
   Future<Position> _positionForSend() async {
+    final ready = _lastPosition;
+    if (ready != null &&
+        gpsAccuracyKnown(ready) &&
+        ready.accuracy <= 20 &&
+        gpsAgeSeconds(ready) < 60) {
+      return ready;
+    }
+
     Object? problem;
     try {
-      final fresh = await _getCurrentLocation().timeout(
-        const Duration(seconds: 10),
-      );
-      _lastPosition = fresh;
-      return fresh;
+      final fresh = await _getCurrentLocation(
+        limit: const Duration(seconds: 9),
+      ).timeout(const Duration(seconds: 10));
+      // A fresh fix that's rougher than one found in the last two minutes
+      // isn't better.
+      final keep =
+          (ready != null &&
+              gpsAccuracyKnown(ready) &&
+              gpsAccuracyKnown(fresh) &&
+              ready.accuracy < fresh.accuracy &&
+              gpsAgeSeconds(ready) < 120)
+          ? ready
+          : fresh;
+      _lastPosition = keep;
+      return keep;
     } catch (e) {
       problem = e;
     }
@@ -221,7 +253,11 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
         'and try again, or call MDRRMO.';
   }
 
-  Future<Position> _getCurrentLocation() async {
+  /// The phone's location: the most precise GPS fix within [limit]
+  /// (bestGpsFix(), item 59), once location is on and allowed.
+  Future<Position> _getCurrentLocation({
+    Duration limit = const Duration(seconds: 10),
+  }) async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       throw const _LocationProblem(
@@ -250,9 +286,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
       );
     }
 
-    return Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
+    return bestGpsFix(limit: limit);
   }
 
   /// Roughly where a pin is, from OpenStreetMap ("Rizal St, Zone II,
@@ -509,6 +543,9 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
       photos: _pickedImages,
       latitude: position.latitude,
       longitude: position.longitude,
+      landmark: _landmarkController.text.trim(),
+      locationAccuracy: position.accuracy,
+      locationAge: gpsAgeSeconds(position),
     );
 
     if (!mounted) return;
@@ -735,6 +772,73 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
                 ),
 
                 const SizedBox(height: 20),
+
+                // ── Landmark (item 59): helps responders find the spot ──
+                Row(
+                  children: [
+                    _fieldLabel('Landmark'),
+                    const SizedBox(width: 6),
+                    Text(
+                      '(Optional)',
+                      style: TextStyle(fontSize: 12.5, color: Colors.grey[500]),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _landmarkController,
+                  maxLength: 150,
+                  textCapitalization: TextCapitalization.sentences,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Color(0xFF1A1A2E),
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. Beside the chapel, house with a blue gate',
+                    hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
+                    helperText:
+                        'Something near the emergency that responders can look for',
+                    helperStyle: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[500],
+                    ),
+                    helperMaxLines: 2,
+                    prefixIcon: const Icon(
+                      Icons.signpost_outlined,
+                      color: Color(0xFF1A3A8F),
+                      size: 20,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF1A3A8F),
+                        width: 2,
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: Colors.grey[300]!,
+                        width: 1.5,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF1A3A8F),
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
 
                 // ── Description ─────────────────────────────────────
                 Row(
@@ -989,16 +1093,59 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
     );
   }
 
+  /// The phone couldn't get a new fix, so the location is where the phone
+  /// last was — over 2 minutes ago (item 59).
+  bool get _oldFix {
+    final position = _lastPosition;
+    return _fromLastKnown &&
+        position != null &&
+        gpsAgeSeconds(position) >= gpsOldSeconds;
+  }
+
+  /// The location found is more than 100 m off, or old (item 59).
+  bool get _roughFix {
+    final position = _lastPosition;
+    return _locationReady &&
+        position != null &&
+        (gpsIsRough(position) || _oldFix);
+  }
+
+  /// "Location ready — within about 12 m." — or, for a rough or old fix,
+  /// how to get a better one (item 59).
+  String get _readyText {
+    final position = _lastPosition;
+    if (position != null && _oldFix) {
+      return 'Using where your phone was ${gpsAgeText(position)}. Go '
+          'outside or near a window — it tries again when you send.';
+    }
+    if (position == null || !gpsAccuracyKnown(position)) {
+      return 'Location ready — MDRRMO can find you.';
+    }
+    final accuracy = gpsAccuracyText(position.accuracy);
+    return gpsIsRough(position)
+        ? 'Your location is only rough ($accuracy). Go outside or near a '
+              'window — it tries again when you send.'
+        : 'Location ready — $accuracy.';
+  }
+
   /// Whether the location is ready, with roughly where it is — or what's
   /// wrong and a button to fix it ("Turn on" / "Allow"), like on SOS.
+  /// Amber when the location is only rough.
   Widget _buildLocationCard() {
     final bool problem = _locationError != null;
+    final bool rough = !problem && _roughFix;
     final Color color = problem
         ? _red
-        : (_locationReady ? _green : const Color(0xFF6B7280));
+        : (rough
+              ? _amber
+              : (_locationReady ? _green : const Color(0xFF6B7280)));
     final Color bg = problem
         ? const Color(0xFFFFEBEE)
-        : (_locationReady ? const Color(0xFFE8F5E9) : const Color(0xFFF5F6FA));
+        : (rough
+              ? const Color(0xFFFFF7E6)
+              : (_locationReady
+                    ? const Color(0xFFE8F5E9)
+                    : const Color(0xFFF5F6FA)));
 
     return Container(
       width: double.infinity,
@@ -1020,9 +1167,11 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
             Icon(
               problem
                   ? Icons.location_off
-                  : (_locationReady
-                        ? Icons.my_location
-                        : Icons.location_searching),
+                  : (rough
+                        ? Icons.gps_not_fixed
+                        : (_locationReady
+                              ? Icons.my_location
+                              : Icons.location_searching)),
               color: color,
               size: 20,
             ),
@@ -1034,9 +1183,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
                 Text(
                   problem
                       ? _locationError!
-                      : (_locationReady
-                            ? 'Location ready — MDRRMO can find you.'
-                            : _locationStatus),
+                      : (_locationReady ? _readyText : _locationStatus),
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,

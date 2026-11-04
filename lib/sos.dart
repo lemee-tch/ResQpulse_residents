@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
+import 'gps_fix.dart';
 import 'phone_call.dart';
 
 /// Home → SOS. Three clear steps, shown in a step bar at the top:
@@ -36,6 +37,7 @@ class _SOSScreenState extends State<SOSScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   static const Color _red = Color(0xFFD32F2F);
   static const Color _green = Color(0xFF2E7D32);
+  static const Color _amber = Color(0xFFB45309);
   static const Color _ink = Color(0xFF1A1A2E);
 
   // ── Steps ──
@@ -133,6 +135,10 @@ class _SOSScreenState extends State<SOSScreen>
   /// Send uses it when a fresh GPS fix takes too long — see
   /// _positionForSend().
   Position? _lastPosition;
+
+  /// _lastPosition is the phone's last known location, not a new fix —
+  /// the phone couldn't get one (item 59).
+  bool _fromLastKnown = false;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
@@ -331,10 +337,11 @@ class _SOSScreenState extends State<SOSScreen>
       });
     }
     try {
-      final position = await _getCurrentLocation().timeout(
-        const Duration(seconds: 20),
-      );
+      final position = await _getCurrentLocation(
+        limit: const Duration(seconds: 18),
+      ).timeout(const Duration(seconds: 20));
       _lastPosition = position;
+      _fromLastKnown = false;
       if (!mounted) return;
       setState(() {
         _locationReady = true;
@@ -345,6 +352,7 @@ class _SOSScreenState extends State<SOSScreen>
       if (!mounted) return;
       if (known != null) {
         _lastPosition = known;
+        _fromLastKnown = true;
         setState(() {
           _locationReady = true;
           _locationStatus = 'Location ready';
@@ -395,19 +403,38 @@ class _SOSScreenState extends State<SOSScreen>
     }
   }
 
-  /// The location sent with the SOS: a fresh GPS fix if the phone gets one
-  /// within 10 seconds, otherwise the one found when the screen opened,
-  /// otherwise the phone's last known location. Before, Send waited for a
-  /// fresh fix with no time limit — indoors that could leave the SOS stuck
-  /// on "Sending…".
+  /// The location sent with the SOS: the one found when the screen opened
+  /// if it's under a minute old and within 20 m (no wait); otherwise the
+  /// most precise fresh GPS fix the phone gets within 10 seconds (item 59);
+  /// otherwise the one found when the screen opened, otherwise the phone's
+  /// last known location. Before, Send waited for a fresh fix with no time
+  /// limit — indoors that could leave the SOS stuck on "Sending…".
   Future<Position> _positionForSend() async {
+    final ready = _lastPosition;
+    if (ready != null &&
+        gpsAccuracyKnown(ready) &&
+        ready.accuracy <= 20 &&
+        gpsAgeSeconds(ready) < 60) {
+      return ready;
+    }
+
     Object? problem;
     try {
-      final fresh = await _getCurrentLocation().timeout(
-        const Duration(seconds: 10),
-      );
-      _lastPosition = fresh;
-      return fresh;
+      final fresh = await _getCurrentLocation(
+        limit: const Duration(seconds: 9),
+      ).timeout(const Duration(seconds: 10));
+      // A fresh fix that's rougher than one found in the last two minutes
+      // isn't better.
+      final keep =
+          (ready != null &&
+              gpsAccuracyKnown(ready) &&
+              gpsAccuracyKnown(fresh) &&
+              ready.accuracy < fresh.accuracy &&
+              gpsAgeSeconds(ready) < 120)
+          ? ready
+          : fresh;
+      _lastPosition = keep;
+      return keep;
     } catch (e) {
       problem = e;
     }
@@ -422,7 +449,11 @@ class _SOSScreenState extends State<SOSScreen>
               'and try again, or call MDRRMO.';
   }
 
-  Future<Position> _getCurrentLocation() async {
+  /// The phone's location: the most precise GPS fix within [limit]
+  /// (bestGpsFix(), item 59), once location is on and allowed.
+  Future<Position> _getCurrentLocation({
+    Duration limit = const Duration(seconds: 10),
+  }) async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       throw const _LocationProblem(
@@ -450,9 +481,7 @@ class _SOSScreenState extends State<SOSScreen>
       );
     }
 
-    return Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
+    return bestGpsFix(limit: limit);
   }
 
   // ── Step handlers ─────────────────────────────────────────────────
@@ -592,6 +621,8 @@ class _SOSScreenState extends State<SOSScreen>
       final result = await ApiService.sendSOS(
         latitude: position.latitude,
         longitude: position.longitude,
+        locationAccuracy: position.accuracy,
+        locationAge: gpsAgeSeconds(position),
         photo: _capturedPhoto,
         emergencyType: _resolvedEmergencyType,
         guestName: widget.isGuest ? _guestName : null,
@@ -942,16 +973,56 @@ class _SOSScreenState extends State<SOSScreen>
     );
   }
 
+  /// The phone couldn't get a new fix, so the location is where the phone
+  /// last was — over 2 minutes ago (item 59).
+  bool get _oldFix {
+    final position = _lastPosition;
+    return _fromLastKnown &&
+        position != null &&
+        gpsAgeSeconds(position) >= gpsOldSeconds;
+  }
+
+  /// The location found is more than 100 m off, or old (item 59).
+  bool get _roughFix {
+    final position = _lastPosition;
+    return _locationReady &&
+        position != null &&
+        (gpsIsRough(position) || _oldFix);
+  }
+
+  /// "Location ready — within about 12 m." — or, for a rough or old fix,
+  /// how to get a better one (item 59).
+  String get _readyText {
+    final position = _lastPosition;
+    if (position != null && _oldFix) {
+      return 'Using where your phone was ${gpsAgeText(position)}. Go '
+          'outside if you can — it tries again when you send.';
+    }
+    if (position == null || !gpsAccuracyKnown(position)) {
+      return 'Location ready — MDRRMO can find you.';
+    }
+    final accuracy = gpsAccuracyText(position.accuracy);
+    return gpsIsRough(position)
+        ? 'Location only rough ($accuracy). Go outside or near a window '
+              'if you can — it tries again when you send.'
+        : 'Location ready — $accuracy.';
+  }
+
   /// Whether the location is ready — on every step, so the resident knows
-  /// MDRRMO will be able to find them.
+  /// MDRRMO will be able to find them. Amber when it's only rough.
   Widget _buildLocationBar() {
     final bool problem = _locationError != null;
+    final bool rough = !problem && _roughFix;
     final Color color = problem
         ? _red
-        : (_locationReady ? _green : const Color(0xFF6B7280));
+        : (rough
+              ? _amber
+              : (_locationReady ? _green : const Color(0xFF6B7280)));
     final Color bg = problem
         ? const Color(0xFFFFEBEE)
-        : (_locationReady ? const Color(0xFFE8F5E9) : Colors.white);
+        : (rough
+              ? const Color(0xFFFFF7E6)
+              : (_locationReady ? const Color(0xFFE8F5E9) : Colors.white));
 
     return Container(
       padding: EdgeInsets.fromLTRB(14, 10, problem ? 6 : 14, 10),
@@ -972,9 +1043,11 @@ class _SOSScreenState extends State<SOSScreen>
             Icon(
               problem
                   ? Icons.location_off
-                  : (_locationReady
-                        ? Icons.my_location
-                        : Icons.location_searching),
+                  : (rough
+                        ? Icons.gps_not_fixed
+                        : (_locationReady
+                              ? Icons.my_location
+                              : Icons.location_searching)),
               color: color,
               size: 18,
             ),
@@ -983,9 +1056,7 @@ class _SOSScreenState extends State<SOSScreen>
             child: Text(
               problem
                   ? _locationError!
-                  : (_locationReady
-                        ? 'Location ready — MDRRMO can find you.'
-                        : _locationStatus),
+                  : (_locationReady ? _readyText : _locationStatus),
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,

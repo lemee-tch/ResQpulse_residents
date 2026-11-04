@@ -792,8 +792,13 @@ class ApiService {
 
   /// Report Emergency. Where it is comes from the phone's location, like
   /// SOS: [latitude] and [longitude] are required, and the server works out
-  /// the street and barangay from them (Api\IncidentController::store()).
-  /// [location] is only sent if given — the app doesn't since item 49.
+  /// the street, barangay and nearest landmark from them
+  /// (Api\IncidentController::store()). [location] is only sent if given —
+  /// the app doesn't since item 49.
+  ///
+  /// Item 59: [landmark] is what the resident typed to find the spot
+  /// ("beside the chapel, blue gate"); [locationAccuracy] is how close the
+  /// GPS pin is in meters, and [locationAge] how many seconds old it is.
   static Future<ApiResponse> submitIncident({
     required String emergencyType,
     required String description,
@@ -801,6 +806,9 @@ class ApiService {
     required double latitude,
     required double longitude,
     String? location,
+    String? landmark,
+    double? locationAccuracy,
+    int? locationAge,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/incidents');
@@ -817,6 +825,10 @@ class ApiService {
       request.fields['description'] = description;
       request.fields['latitude'] = latitude.toString();
       request.fields['longitude'] = longitude.toString();
+      if (landmark != null && landmark.trim().isNotEmpty) {
+        request.fields['landmark'] = landmark.trim();
+      }
+      _addPinDetails(request, locationAccuracy, locationAge);
 
       for (final photo in photos) {
         request.files.add(
@@ -871,6 +883,22 @@ class ApiService {
     }
   }
 
+  /// How close the GPS pin is (meters) and how old (seconds), for MDRRMO
+  /// (item 59). Left out when the phone didn't say — Geolocator gives an
+  /// accuracy of 0 when the phone can't tell.
+  static void _addPinDetails(
+    http.MultipartRequest request,
+    double? accuracy,
+    int? age,
+  ) {
+    if (accuracy != null && accuracy.isFinite && accuracy > 0) {
+      request.fields['location_accuracy'] = accuracy.ceil().toString();
+    }
+    if (age != null && age >= 0) {
+      request.fields['location_age'] = age.toString();
+    }
+  }
+
   /// SOS panic button — sends GPS coordinates and an optional photo.
   /// Deliberately lightweight (single photo, no min-count) since this
   /// needs to fire within the 3-second hold window.
@@ -883,6 +911,9 @@ class ApiService {
   ///
   /// [guestName] / [guestMobile] are required by the server when there is
   /// no login (guest mode) — see Api\IncidentController::sos().
+  ///
+  /// [locationAccuracy] and [locationAge] (item 59): how close the GPS pin
+  /// is in meters, and how many seconds old it is.
   static Future<ApiResponse> sendSOS({
     required double latitude,
     required double longitude,
@@ -890,6 +921,8 @@ class ApiService {
     String? emergencyType,
     String? guestName,
     String? guestMobile,
+    double? locationAccuracy,
+    int? locationAge,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/incidents/sos');
@@ -901,6 +934,7 @@ class ApiService {
 
       request.fields['latitude'] = latitude.toString();
       request.fields['longitude'] = longitude.toString();
+      _addPinDetails(request, locationAccuracy, locationAge);
       if (emergencyType != null && emergencyType.trim().isNotEmpty) {
         request.fields['emergency_type'] = emergencyType.trim();
       }
