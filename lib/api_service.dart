@@ -861,6 +861,14 @@ class ApiService {
         return ApiResponse.error(msg.toString());
       }
       return ApiResponse.error(data['message'] ?? 'Failed to submit report.');
+    } on TimeoutException {
+      // The report may have reached MDRRMO before the reply came back.
+      // Sending it again within 2 minutes doesn't make a second one — the
+      // server answers with the one it has (item 61).
+      return ApiResponse.error(
+        'The connection is slow, so we\'re not sure the report reached '
+        'MDRRMO. Send it again — it won\'t be sent twice.',
+      );
     } catch (e) {
       return ApiResponse.error(_handleError(e));
     }
@@ -975,7 +983,24 @@ class ApiService {
         final msg = first is List ? first.first : first;
         return ApiResponse.error(msg.toString());
       }
+      // Too many SOS alerts from this phone or account (item 61).
+      if (response.statusCode == 429) {
+        return ApiResponse.error(
+          data['message'] ?? 'MDRRMO already has your SOS alerts.',
+          statusCode: 429,
+        );
+      }
       return ApiResponse.error(data['message'] ?? 'Failed to send SOS.');
+    } on TimeoutException {
+      // The SOS may have reached MDRRMO before the reply came back. Sending
+      // it again within 2 minutes doesn't make a second alarm — the server
+      // answers with the SOS it has (item 61). 408: the SOS screen says
+      // "may have been sent".
+      return ApiResponse.error(
+        'The connection is slow, so we\'re not sure the SOS reached MDRRMO. '
+        'Send it again — MDRRMO won\'t get it twice.',
+        statusCode: 408,
+      );
     } catch (e) {
       return ApiResponse.error(_handleError(e));
     }

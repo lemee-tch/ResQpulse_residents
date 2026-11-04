@@ -48,6 +48,10 @@ class _SOSScreenState extends State<SOSScreen>
   bool _sosSent = false;
   String? _sendError;
 
+  /// Why it wasn't sent: 408 = the reply didn't come in time, so it may
+  /// have reached MDRRMO; 429 = too many SOS alerts (item 61).
+  int? _sendErrorCode;
+
   /// 0 = Emergency, 1 = Photo, 2 = Send.
   int get _step => !_typeConfirmed ? 0 : (_awaitingConfirm ? 2 : 1);
 
@@ -521,6 +525,7 @@ class _SOSScreenState extends State<SOSScreen>
       _awaitingConfirm = false;
       _capturedPhoto = null;
       _sendError = null;
+      _sendErrorCode = null;
     });
   }
 
@@ -531,6 +536,7 @@ class _SOSScreenState extends State<SOSScreen>
     setState(() {
       _isCapturing = true;
       _sendError = null;
+      _sendErrorCode = null;
     });
 
     File? photo;
@@ -561,6 +567,7 @@ class _SOSScreenState extends State<SOSScreen>
       _capturedPhoto = null;
       _awaitingConfirm = true;
       _sendError = null;
+      _sendErrorCode = null;
     });
   }
 
@@ -572,6 +579,7 @@ class _SOSScreenState extends State<SOSScreen>
       _capturedPhoto = null;
       _awaitingConfirm = false;
       _sendError = null;
+      _sendErrorCode = null;
     });
   }
 
@@ -608,6 +616,7 @@ class _SOSScreenState extends State<SOSScreen>
     setState(() {
       _isSending = true;
       _sendError = null;
+      _sendErrorCode = null;
     });
 
     try {
@@ -662,6 +671,7 @@ class _SOSScreenState extends State<SOSScreen>
         setState(() {
           _isSending = false;
           _sendError = result.error ?? 'Failed to send SOS. Please try again.';
+          _sendErrorCode = result.statusCode;
         });
       }
     } catch (e) {
@@ -1593,10 +1603,20 @@ class _SOSScreenState extends State<SOSScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _stepTitle(
-          _sendError != null ? 'Your SOS wasn\'t sent' : 'Ready to send',
-          _sendError != null
-              ? 'Check the problem below, then press SOS again.'
-              : 'Check the details, then press the SOS button.',
+          _sendError == null
+              ? 'Ready to send'
+              : (_sendErrorCode == 408
+                    ? 'Your SOS may have been sent'
+                    : (_sendErrorCode == 429
+                          ? 'MDRRMO has your SOS alerts'
+                          : 'Your SOS wasn\'t sent')),
+          _sendError == null
+              ? 'Check the details, then press the SOS button.'
+              : (_sendErrorCode == 408
+                    ? 'Press SOS again to be sure — MDRRMO won\'t get it twice.'
+                    : (_sendErrorCode == 429
+                          ? 'For a new emergency, call MDRRMO.'
+                          : 'Check the problem below, then press SOS again.')),
         ),
         const SizedBox(height: 16),
 
@@ -1682,7 +1702,9 @@ class _SOSScreenState extends State<SOSScreen>
           _isSending
               ? 'Sending your SOS… keep this screen open.'
               : (_sendError != null
-                    ? 'Press SOS to try again.'
+                    ? (_sendErrorCode == 429
+                          ? 'For a new emergency, call MDRRMO below.'
+                          : 'Press SOS to try again.')
                     : 'Press SOS to send it to MDRRMO.'),
           textAlign: TextAlign.center,
           style: TextStyle(
