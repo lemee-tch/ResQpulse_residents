@@ -547,6 +547,15 @@ class ApiService {
       if (response.statusCode == 200) {
         return ApiResponse.success(data);
       }
+      // The first reason the server gave (item 62) — before, a refused
+      // password or email only said "Validation failed".
+      if (data is Map &&
+          data['errors'] is Map &&
+          (data['errors'] as Map).isNotEmpty) {
+        final first = (data['errors'] as Map).values.first;
+        final msg = first is List && first.isNotEmpty ? first.first : first;
+        return ApiResponse.error(msg.toString());
+      }
       return ApiResponse.error(data['message'] ?? 'Invalid or expired code.');
     } catch (e) {
       return ApiResponse.error(_handleError(e));

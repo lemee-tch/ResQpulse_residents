@@ -150,12 +150,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _startResendCooldown();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          // The server doesn't say whether an account uses that email or
+          // number — so a mistyped one isn't said to have a code (item 62).
           content: Text(
             target == 'sms'
                 ? 'If an account logs in with $_destination, a code is on its way.'
                 : (isResend
-                      ? 'A new code was sent to $_destination'
-                      : 'A 6-digit code was sent to $_destination'),
+                      ? 'If an account uses $_destination, a new code is on its way.'
+                      : 'If an account uses $_destination, a 6-digit code is on its way.'),
           ),
           backgroundColor: const Color(0xFF1A3A8F),
         ),
@@ -324,9 +326,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 'Enter your email',
                 Icons.email_outlined,
               ).copyWith(helperText: 'The email you log in with.'),
+              // Trimmed (keyboards add a space after a suggestion), and the
+              // same check as Change Email — "name+tag@…" and endings like
+              // ".online" are valid emails (item 62).
               validator: (v) {
-                if (v == null || v.isEmpty) return 'Please enter your email';
-                if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v)) {
+                final value = (v ?? '').trim();
+                if (value.isEmpty) return 'Please enter your email';
+                if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value)) {
                   return 'Please enter a valid email';
                 }
                 return null;
@@ -438,7 +444,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             bySms
                 ? 'If an account logs in with $_destination, we texted it a '
                       '6-digit code. It expires in 10 minutes.'
-                : 'We sent a 6-digit code to $_destination. It expires in 10 minutes.',
+                : 'If an account uses $_destination, we emailed it a 6-digit '
+                      'code. It expires in 10 minutes.',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey[600],

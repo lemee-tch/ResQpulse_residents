@@ -1636,7 +1636,9 @@ class _RegisterScreenState extends State<RegisterScreen>
             'We\'ll send your 6-digit code here. You\'ll also use it to log in.',
         validator: (v) {
           if (v == null || v.trim().isEmpty) return 'Email is required';
-          if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v.trim())) {
+          // Same check as Change Email (item 62): "name+tag@…" and endings
+          // like ".online" are valid emails.
+          if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) {
             return 'Enter a valid email address';
           }
           return null;

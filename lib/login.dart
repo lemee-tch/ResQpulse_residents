@@ -191,8 +191,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       return 'Please enter your email or mobile number';
                     }
                     if (value.contains('@')) {
+                      // Same check as Change Email (item 62): before, an
+                      // email changed to "name+tag@…" or ending in
+                      // ".online" couldn't be used to log in.
                       if (!RegExp(
-                        r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
+                        r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
                       ).hasMatch(value)) {
                         return 'Please enter a valid email';
                       }
