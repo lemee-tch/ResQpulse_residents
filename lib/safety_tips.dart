@@ -520,28 +520,56 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
       remember: 'Anaphylaxis can be fatal within minutes — act immediately.',
       steps: [
         _StepItem(
-          title: 'Remove the allergen',
-          bullets: ['Remove the person from the allergen source if possible.'],
-          icon: Icons.directions_walk,
-        ),
-        _StepItem(
-          title: 'Use an EpiPen',
+          title: 'Recognize the signs',
           bullets: [
-            'Use an epinephrine auto-injector on the outer thigh if available.',
+            'Hives, rash, itching.',
+            'Swelling of lips, tongue, or throat.',
+            'Difficulty breathing or swallowing.',
+            'Dizziness or nausea.',
           ],
-          icon: Icons.vaccines,
+          image: 'assets/aler1.png',
         ),
         _StepItem(
-          title: 'Position them',
+          title: 'Give antihistamine(if available)',
           bullets: [
-            'Lay them flat and elevate legs, unless breathing is difficult.',
+            'Help reduce itching and swelling.',
+            'Follow the dosage instructions on the package.',
           ],
-          icon: Icons.airline_seat_flat,
+          image: 'assets/aler2.png',
         ),
         _StepItem(
-          title: 'Monitor',
-          bullets: ['Monitor breathing closely and be ready to start CPR.'],
-          isEmergencyStep: true,
+          title: 'Use an epinephrine auto-injector(if available)',
+          bullets: [
+            'For severe reactions(e.g., trouble breathing, swelling, anaphylaxis).'
+                'Inject into the outer thigh and hold for 10 seconds.',
+          ],
+          image: 'assets/aler3.png',
+        ),
+        _StepItem(
+          title: 'Call for emergency help',
+          bullets: [
+            'If symptoms are severe or worsening, call emergency services immediately.'
+                'Even if symptoms improve, get medical evaluation as soon as possible.',
+          ],
+          image: 'assets/aler4.png',
+        ),
+        _StepItem(
+          title: 'Keep the person calm and comfortable',
+          bullets: [
+            'Help them sit or lie dowm.',
+            'Losin tigh clothing.',
+            'Keep them warm (but not hot).',
+          ],
+          image: 'assets/aler5.png',
+        ),
+        _StepItem(
+          title: 'Monitor and be ready',
+          bullets: [
+            'Watch the worsining of symptoms.',
+            'Be ready to give another dose of epinephrine if prescribed and symptoms persist.',
+            'Do not leave them alone',
+          ],
+          image: 'assets/aler6.png',
         ),
       ],
     ),
