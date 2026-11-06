@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
+import 'map_credits.dart';
 
 class EvacuationCentersScreen extends StatefulWidget {
   const EvacuationCentersScreen({super.key});
@@ -287,6 +288,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                           ),
                       ],
                     ),
+                    // Item 64: the credit OpenStreetMap requires.
+                    const OsmCredit(alignment: Alignment.bottomLeft),
                   ],
                 ),
 

@@ -179,12 +179,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 16),
                         _logoutCard(),
                         const SizedBox(height: 20),
+                        // grey[500] was too faint to read (item 64).
                         Text(
                           'ResQPulse · Version $kAppVersion',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[500],
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            color: Color(0xFF4B5563),
                           ),
                         ),
                       ],
@@ -461,7 +462,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             icon: Icons.info_outline,
             color: const Color(0xFF6A1B9A),
             title: 'About ResQPulse',
-            subtitle: 'The app, your information and the team',
+            subtitle: 'The app, privacy, terms and accessibility',
             onTap: () => _open(const AboutScreen()),
           ),
         ],
@@ -520,6 +521,11 @@ class _MenuRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Read as one button by screen readers (item 64).
+    return MergeSemantics(child: Semantics(button: true, child: _row()));
+  }
+
+  Widget _row() {
     return InkWell(
       onTap: onTap,
       child: Padding(

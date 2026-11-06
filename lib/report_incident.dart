@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
 import 'gps_fix.dart';
+import 'legal.dart';
 
 /// Home → Report Emergency: the type, what happened, photos — and where,
 /// which is the phone's own location, the same as SOS (item 49). There is
@@ -1044,10 +1045,26 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen>
                   widget.isGuest
                       ? 'Photos are optional as a guest, but help responders prepare.'
                       : 'Upload $_minPhotos to $_maxPhotos photos of the incident.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                  // grey[500] was too faint to read (item 64).
+                  style: TextStyle(fontSize: 12.5, color: Colors.grey[700]),
                 ),
 
-                const SizedBox(height: 36),
+                const SizedBox(height: 24),
+
+                // Item 64: who sees a report — said before it's sent.
+                PrivacyNote(
+                  widget.isGuest
+                      ? 'MDRRMO Rosales and the responders sent will see this '
+                            'report, its photos, your location, and the name '
+                            'and number you entered.'
+                      : 'MDRRMO Rosales and the responders sent will see this '
+                            'report, its photos and your location. False '
+                            'reports can get an account blocked.',
+                  links: const [LegalDoc.privacy, LegalDoc.terms],
+                  accent: const Color(0xFF1A3A8F),
+                ),
+
+                const SizedBox(height: 16),
 
                 // ── Submit Button ────────────────────────────────────
                 SizedBox(

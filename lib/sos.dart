@@ -6,6 +6,7 @@ import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
 import 'gps_fix.dart';
+import 'legal.dart';
 import 'phone_call.dart';
 
 /// Home → SOS. Three clear steps, shown in a step bar at the top:
@@ -660,7 +661,8 @@ class _SOSScreenState extends State<SOSScreen>
         await _showSentDialog(
           useServerMessage
               ? serverMessage
-              : 'SOS sent. MDRRMO will verify it right away and then send responders.',
+              // Item 64: no promise of "right away".
+              : 'SOS sent. MDRRMO will check it and send responders as soon as possible.',
         );
         // However the pop-up was closed — Back to Home, or the phone's
         // Back button — the resident goes back to Home.
@@ -1787,6 +1789,14 @@ class _SOSScreenState extends State<SOSScreen>
               style: TextButton.styleFrom(foregroundColor: Colors.grey[700]),
             ),
           ],
+        ),
+        const SizedBox(height: 10),
+        // Item 64: who gets the SOS. It only informs — it never stands
+        // between the resident and the SOS button.
+        const PrivacyNote(
+          'Your name, mobile number, location and photo go to MDRRMO '
+          'Rosales and the responders sent to help.',
+          accent: Color(0xFF1A3A8F),
         ),
       ],
     );

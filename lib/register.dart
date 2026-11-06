@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'api_service.dart';
 import 'id_photo_quality.dart';
+import 'legal.dart';
 import 'login.dart';
 import 'push_notification.dart';
 import 'home.dart';
@@ -74,6 +75,11 @@ class _RegisterScreenState extends State<RegisterScreen>
 
   bool _obscurePassword = true;
   bool _isSendingCode = false;
+
+  /// The sign-up consent (item 64): ticked by the resident, never
+  /// pre-ticked. Sent with the sign-up so the server records it.
+  bool _consentGiven = false;
+  bool _consentMissing = false;
   bool _isVerifying = false;
 
   // The red error box, shown right above the step's main button. Set it
@@ -616,6 +622,16 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
     if (!_formKey.currentState!.validate()) return;
 
+    // Item 64: the account is only created with the resident's consent.
+    if (!_consentGiven) {
+      setState(() => _consentMissing = true);
+      _showError(
+        'Please tick the box to agree to the Terms and Conditions and the '
+        'Privacy Policy.',
+      );
+      return;
+    }
+
     // Safety net — step 2 already requires the photo.
     if (_uploadedFile == null) {
       setState(() => _step = 1);
@@ -653,6 +669,7 @@ class _RegisterScreenState extends State<RegisterScreen>
       password: password,
       validId: _uploadedFile,
       verifyVia: via,
+      consentVersion: kLegalVersion,
       previousEmail: _sentEmail,
       previousMobile: _sentMobile,
       previousPassword: _sentPassword,
@@ -1050,9 +1067,16 @@ class _RegisterScreenState extends State<RegisterScreen>
       Text(
         'Take a photo of a valid ID that shows your address in Rosales, '
         'Pangasinan. MDRRMO uses this to verify that you are a resident.',
-        style: TextStyle(fontSize: 13, color: Colors.grey[600], height: 1.45),
+        style: TextStyle(fontSize: 13, color: Colors.grey[700], height: 1.45),
       ),
-      const SizedBox(height: 16),
+      // Item 64: said when the ID photo is taken, before it's sent.
+      const SizedBox(height: 8),
+      const PrivacyNote(
+        'Your ID photo stays on this phone until you create your account. '
+        'Then only MDRRMO Rosales sees it, to verify where you live.',
+        accent: Color(0xFF1A3A8F),
+      ),
+      const SizedBox(height: 12),
       _buildIdFrame(),
       const SizedBox(height: 14),
       ..._buildIdPhotoControls(),
@@ -1576,6 +1600,8 @@ class _RegisterScreenState extends State<RegisterScreen>
         if (waiting)
           ..._buildCodeEntry()
         else ...[
+          _buildConsent(),
+          const SizedBox(height: 18),
           if (changed) ...[_buildChangedNotice(), const SizedBox(height: 14)],
           ..._errorSlot(),
           _primaryButton(
@@ -1586,6 +1612,106 @@ class _RegisterScreenState extends State<RegisterScreen>
         ],
       ],
     ];
+  }
+
+  /// What MDRRMO does with the resident's information, and the check box
+  /// that agrees to it (item 64, NPC Circular No. 2023-04: a short notice
+  /// when consent is asked, the full details in the Privacy Policy, and a
+  /// clear action — the box starts unticked).
+  Widget _buildConsent() {
+    const Color navy = Color(0xFF1A3A8F);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F4FF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _consentMissing ? Colors.red : const Color(0xFFC7D2FE),
+          width: _consentMissing ? 1.6 : 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            header: true,
+            child: const Text(
+              'Before you create your account',
+              style: TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF111827),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            kSignUpPrivacyNotice,
+            style: TextStyle(
+              fontSize: 13.5,
+              color: Color(0xFF374151),
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 4),
+          // The box and its sentence are one control: tapping the
+          // sentence ticks it too, and screen readers read one check box.
+          CheckboxListTile(
+            value: _consentGiven,
+            onChanged: (value) => setState(() {
+              _consentGiven = value ?? false;
+              if (_consentGiven) _consentMissing = false;
+            }),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+            activeColor: navy,
+            visualDensity: VisualDensity.compact,
+            title: const Text(
+              kSignUpConsent,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF111827),
+                height: 1.4,
+              ),
+            ),
+          ),
+          if (_consentMissing)
+            const Padding(
+              padding: EdgeInsets.only(left: 4, bottom: 4),
+              child: Text(
+                'Tick the box to continue.',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFB71C1C),
+                ),
+              ),
+            ),
+          Wrap(
+            spacing: 4,
+            children: [
+              for (final doc in const [LegalDoc.terms, LegalDoc.privacy])
+                TextButton(
+                  onPressed: () => openLegal(context, doc, accent: navy),
+                  style: TextButton.styleFrom(
+                    foregroundColor: navy,
+                    minimumSize: const Size(48, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    textStyle: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                  child: Text('Read the ${doc.title}'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   /// Email: the email (log in + code) and the mobile number, so MDRRMO can

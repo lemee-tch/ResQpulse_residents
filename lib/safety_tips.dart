@@ -684,6 +684,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Back',
           icon: const Icon(
             Icons.arrow_back_ios_new,
             color: Color(0xFF1A1A2E),
@@ -719,6 +720,33 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
                   borderSide: BorderSide.none,
                 ),
               ),
+            ),
+          ),
+          // Item 64: first-aid steps are guidance, not medical advice.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                ExcludeSemantics(
+                  child: Icon(
+                    Icons.info_outline,
+                    size: 16,
+                    color: Color(0xFF4B5563),
+                  ),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'General first-aid guidance, not medical advice. In an emergency, call #2441 or 911 first.',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFF4B5563),
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           Expanded(

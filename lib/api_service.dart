@@ -327,6 +327,9 @@ class ApiService {
     String? previousEmail,
     String? previousMobile,
     String? previousPassword,
+    // The version of the Terms and Privacy Policy the resident agreed to
+    // (item 64). The server needs the agreement to create the account.
+    String? consentVersion,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/register');
@@ -351,6 +354,10 @@ class ApiService {
       }
       request.fields['password'] = password;
       request.fields['verify_via'] = verifyVia;
+      if (consentVersion != null) {
+        request.fields['consent'] = '1';
+        request.fields['consent_version'] = consentVersion;
+      }
       if (previousEmail != null && previousEmail.isNotEmpty) {
         request.fields['previous_email'] = previousEmail;
       }
